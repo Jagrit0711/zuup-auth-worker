@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.dev.vars
+.wrangler/
+mascot.b64
+*.pyc
