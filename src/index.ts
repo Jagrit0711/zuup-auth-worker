@@ -12,7 +12,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors({
   origin: (origin) => {
-    if (origin && origin.endsWith('.zuup.dev')) return origin;
+    if (origin && (origin.endsWith('.zuup.dev') || origin === 'https://zuup.dev')) return origin;
     return 'http://localhost:5173';
   },
   credentials: true,
@@ -70,7 +70,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
         
         <!-- Header -->
         <div class="text-center mb-8" x-show="step !== 'forgot_password'">
-            <h2 class="text-[22px] font-bold text-white mb-2">Sign in to \${siteName}</h2>
+            <h2 class="text-[22px] font-bold text-white mb-2">Sign in to ${siteName}</h2>
             <p class="text-muted text-[15px]">Access all Zuup services with one account</p>
         </div>
 
@@ -378,7 +378,14 @@ const initSupabase = (c: any) => {
 };
 
 const setSSOCookie = (c: any, token: string) => {
-  setCookie(c, 'zuup_session', token, { domain: '.zuup.dev', path: '/', secure: true, httpOnly: true, sameSite: 'Lax', maxAge: 60 * 60 * 24 * 7 });
+  setCookie(c, 'zuup_session', token, { 
+    domain: '.zuup.dev', 
+    path: '/', 
+    secure: true, 
+    httpOnly: true, 
+    sameSite: 'None', // Critical: 'None' allows localhost frontend to authenticate against production auth server!
+    maxAge: 60 * 60 * 24 * 7 
+  });
 };
 
 app.post('/api/login', async (c) => {
