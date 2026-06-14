@@ -494,7 +494,7 @@ app.all('/*', async (c) => {
                          targetUrl.pathname.startsWith('/graphql/');
                          
   if (!isSupabasePath) {
-    return c.text('Not Found', 404);
+    return c.json({ error: 'Not a Supabase Path', path: targetUrl.pathname }, 404);
   }
 
   targetUrl.hostname = supabaseHost;
@@ -532,7 +532,20 @@ app.all('/*', async (c) => {
     redirect: 'manual'
   });
   
-  return fetch(proxyRequest);
+  const response = await fetch(proxyRequest);
+  
+  if (response.status === 404 || response.status === 401) {
+    const text = await response.text();
+    return c.json({
+      proxy_debug: true,
+      target_url: targetUrl.toString(),
+      has_anon_key_secret: !!c.env.SUPABASE_ANON_KEY,
+      status: response.status,
+      supabase_response: text
+    }, response.status);
+  }
+  
+  return response;
 });
 
 export default app;
