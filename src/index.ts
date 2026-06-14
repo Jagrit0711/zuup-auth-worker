@@ -499,12 +499,22 @@ app.all('/*', async (c) => {
 
   targetUrl.hostname = supabaseHost;
   
-  // Forward the request exactly as-is
-  const proxyRequest = new Request(targetUrl.toString(), c.req.raw);
+  // Clone the headers so we can modify them
+  const headers = new Headers(c.req.raw.headers);
   
-  // If the client didn't provide an apikey, we can inject the anon key if we had it.
-  // But actually, Supabase requires the anon key in the apikey header.
-  // The frontend should already be sending the apikey header!
+  // Always inject the correct apikey from the worker's secrets!
+  // This overwrites 'placeholder_key' from the frontend and keeps your real key secure.
+  if (c.env.SUPABASE_ANON_KEY) {
+    headers.set('apikey', c.env.SUPABASE_ANON_KEY);
+  }
+  
+  // Forward the request
+  const proxyRequest = new Request(targetUrl.toString(), {
+    method: c.req.method,
+    headers: headers,
+    body: c.req.method !== 'GET' && c.req.method !== 'HEAD' ? c.req.raw.body : undefined,
+    redirect: 'manual'
+  });
   
   return fetch(proxyRequest);
 });
