@@ -47,3 +47,56 @@ git push -u origin main
 ```
 *(Make sure you create the `zuup-auth-worker` repository on GitHub first!)*
 # zuup-auth-worker
+
+## 🔌 How to Integrate Zuup Auth into Any Site
+
+Integrating this centralized Auth Worker into any of your frontends (like `zuup.dev`, `careers.zuup.dev`, etc.) is incredibly simple.
+
+### 1. Redirect to Login
+To prompt a user to log in, simply redirect them to the Auth Worker and pass your site's URL as the `redirect_to` query parameter:
+
+```javascript
+// Example: Sending user to login from a React component
+const handleLoginClick = () => {
+  const myUrl = window.location.href; // e.g., https://careers.zuup.dev/dashboard
+  window.location.href = \`https://auth.zuup.dev/login?redirect_to=\${encodeURIComponent(myUrl)}\`;
+};
+```
+*The Auth Worker will automatically say "Sign in to careers.zuup.dev" based on the URL you pass!*
+
+### 2. Verify Authentication (SSO)
+When the user successfully logs in, the Auth Worker sets a secure `zuup_session` HTTP-only cookie on the `.zuup.dev` domain and redirects them back to your site. 
+
+To check if a user is logged in, your frontend just needs to make a `fetch` request to the Auth Worker's `/api/me` endpoint.
+
+```javascript
+// Example: Checking if a user is logged in
+const checkAuth = async () => {
+  try {
+    const res = await fetch('https://auth.zuup.dev/api/me', {
+      // CRITICAL: You must include credentials so the secure cookie is sent!
+      credentials: 'include' 
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      console.log("User is logged in!", data.user);
+    } else {
+      console.log("User is not logged in.");
+      // You can redirect them back to login here
+    }
+  } catch (err) {
+    console.error("Auth check failed", err);
+  }
+};
+```
+
+### 3. Log Out
+To log a user out across the entire Zuup ecosystem, redirect them to the `/api/logout` endpoint:
+
+```javascript
+const handleLogout = () => {
+  const myUrl = window.location.href;
+  window.location.href = \`https://auth.zuup.dev/api/logout?redirect_to=\${encodeURIComponent(myUrl)}\`;
+};
+```
