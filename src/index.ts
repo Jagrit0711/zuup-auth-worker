@@ -472,9 +472,41 @@ app.get('/api/me', async (c) => {
 });
 
 app.get('/api/logout', (c) => {
-  deleteCookie(c, 'zuup_session', { domain: '.zuup.dev', path: '/' });
+  deleteCookie(c, 'zuup_session', { path: '/' });
   const redirectTo = c.req.query('redirect_to') || 'https://zuup.dev';
   return c.redirect(redirectTo);
+});
+
+// ==========================================
+// SUPABASE REVERSE PROXY (Custom Domain)
+// ==========================================
+// This allows the frontend to use https://auth.zuup.dev as its VITE_SUPABASE_URL
+app.all('/*', async (c) => {
+  if (!c.env.SUPABASE_URL) return c.text('Supabase URL missing', 500);
+  
+  const targetUrl = new URL(c.req.url);
+  const supabaseHost = new URL(c.env.SUPABASE_URL).hostname;
+  
+  // Only proxy Supabase specific paths
+  const isSupabasePath = targetUrl.pathname.startsWith('/rest/') || 
+                         targetUrl.pathname.startsWith('/storage/') || 
+                         targetUrl.pathname.startsWith('/realtime/') ||
+                         targetUrl.pathname.startsWith('/graphql/');
+                         
+  if (!isSupabasePath) {
+    return c.text('Not Found', 404);
+  }
+
+  targetUrl.hostname = supabaseHost;
+  
+  // Forward the request exactly as-is
+  const proxyRequest = new Request(targetUrl.toString(), c.req.raw);
+  
+  // If the client didn't provide an apikey, we can inject the anon key if we had it.
+  // But actually, Supabase requires the anon key in the apikey header.
+  // The frontend should already be sending the apikey header!
+  
+  return fetch(proxyRequest);
 });
 
 export default app;
