@@ -502,10 +502,21 @@ app.all('/*', async (c) => {
   // Clone the headers so we can modify them
   const headers = new Headers(c.req.raw.headers);
   
-  // Always inject the correct apikey from the worker's secrets!
-  // This overwrites 'placeholder_key' from the frontend and keeps your real key secure.
+  // Always inject the correct apikey from the worker's secrets
   if (c.env.SUPABASE_ANON_KEY) {
     headers.set('apikey', c.env.SUPABASE_ANON_KEY);
+    
+    // The frontend supabase-js client also sends the anon key in the Authorization header by default.
+    // If it sent the fake placeholder key, replace it with the real one!
+    const authHeader = headers.get('Authorization');
+    if (!authHeader || authHeader === 'Bearer placeholder_key') {
+      headers.set('Authorization', `Bearer ${c.env.SUPABASE_ANON_KEY}`);
+    }
+    
+    // WebSockets and some endpoints pass the apikey in the URL
+    if (targetUrl.searchParams.get('apikey') === 'placeholder_key') {
+      targetUrl.searchParams.set('apikey', c.env.SUPABASE_ANON_KEY);
+    }
   }
   
   // Forward the request
