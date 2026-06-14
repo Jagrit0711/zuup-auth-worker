@@ -502,6 +502,11 @@ app.all('/*', async (c) => {
   // Clone the headers so we can modify them
   const headers = new Headers(c.req.raw.headers);
   
+  // CRITICAL: We must delete the original 'Host' header (auth.zuup.dev) 
+  // so that fetch() sets it to the Supabase host. Otherwise Supabase returns 404!
+  headers.delete('Host');
+  headers.delete('X-Forwarded-Host');
+  
   // Always inject the correct apikey from the worker's secrets
   if (c.env.SUPABASE_ANON_KEY) {
     headers.set('apikey', c.env.SUPABASE_ANON_KEY);
