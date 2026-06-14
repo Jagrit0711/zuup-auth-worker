@@ -16,7 +16,7 @@ app.use('/*', cors({
     return 'http://localhost:5173';
   },
   credentials: true,
-  allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'Prefer', 'Content-Profile'],
+  allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'Prefer', 'Content-Profile', 'Accept-Profile'],
 }));
 
 const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
