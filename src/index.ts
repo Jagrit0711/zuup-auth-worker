@@ -16,6 +16,7 @@ app.use('/*', cors({
     return 'http://localhost:5173';
   },
   credentials: true,
+  allowHeaders: ['Content-Type', 'Authorization'],
 }));
 
 const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
@@ -226,7 +227,11 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || 'Failed to login');
-                            window.location.href = this.redirectTo;
+                            
+                            // Append token to URL to bypass cross-site cookie blockers
+                            const url = new URL(this.redirectTo);
+                            url.searchParams.set('token', data.token);
+                            window.location.href = url.toString();
                         } 
                         else if (this.step === 'otp_send') {
                             const res = await fetch('/api/otp/send', {
@@ -249,7 +254,11 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || 'Invalid code');
-                            window.location.href = this.redirectTo;
+                            
+                            // Append token to URL
+                            const url = new URL(this.redirectTo);
+                            url.searchParams.set('token', data.token);
+                            window.location.href = url.toString();
                         }
                         else if (this.step === 'forgot_password') {
                             const res = await fetch('/api/reset-password', {
@@ -379,11 +388,10 @@ const initSupabase = (c: any) => {
 
 const setSSOCookie = (c: any, token: string) => {
   setCookie(c, 'zuup_session', token, { 
-    domain: '.zuup.dev', 
     path: '/', 
     secure: true, 
     httpOnly: true, 
-    sameSite: 'None', // Critical: 'None' allows localhost frontend to authenticate against production auth server!
+    sameSite: 'None', // Critical: 'None' allows cross-site frontend to authenticate against production auth server!
     maxAge: 60 * 60 * 24 * 7 
   });
 };
@@ -395,7 +403,7 @@ app.post('/api/login', async (c) => {
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
   if (error) return c.json({ error: error.message }, 400);
   setSSOCookie(c, data.session.access_token);
-  return c.json({ success: true });
+  return c.json({ success: true, token: data.session.access_token });
 });
 
 app.post('/api/otp/send', async (c) => {
@@ -414,7 +422,7 @@ app.post('/api/otp/verify', async (c) => {
   const { data, error } = await supabaseAdmin.auth.verifyOtp({ email, token, type: 'email' });
   if (error) return c.json({ error: error.message }, 400);
   setSSOCookie(c, data.session.access_token);
-  return c.json({ success: true });
+  return c.json({ success: true, token: data.session.access_token });
 });
 
 app.post('/api/reset-password', async (c) => {
@@ -427,12 +435,39 @@ app.post('/api/reset-password', async (c) => {
 });
 
 app.get('/api/me', async (c) => {
-  if (!c.env.SUPABASE_URL) return c.json({ loggedIn: false }, 401);
-  const token = getCookie(c, 'zuup_session');
-  if (!token) return c.json({ loggedIn: false }, 401);
+  if (!c.env.SUPABASE_URL) {
+    return c.json({ loggedIn: false, error: 'SUPABASE_URL is missing in worker environment' }, 401);
+  }
+  
+  const authHeader = c.req.header('Authorization');
+  let token = getCookie(c, 'zuup_session');
+  
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  }
+  
+  const allCookies = c.req.header('Cookie') || 'none';
+  
+  if (!token) {
+    return c.json({ 
+      loggedIn: false, 
+      error: 'zuup_session cookie is missing in request',
+      debug_cookies_received: allCookies,
+      debug_origin: c.req.header('Origin') || 'unknown'
+    }, 401);
+  }
+
   const supabaseAdmin = initSupabase(c);
   const { data, error } = await supabaseAdmin.auth.getUser(token);
-  if (error || !data.user) return c.json({ loggedIn: false }, 401);
+  
+  if (error || !data.user) {
+    return c.json({ 
+      loggedIn: false, 
+      error: 'Token is invalid or expired', 
+      details: error?.message 
+    }, 401);
+  }
+  
   return c.json({ loggedIn: true, user: data.user });
 });
 
