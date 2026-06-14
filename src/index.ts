@@ -477,20 +477,6 @@ app.get('/api/logout', (c) => {
   return c.redirect(redirectTo);
 });
 
-app.get('/api/test-db', async (c) => {
-  if (!c.env.SUPABASE_URL || !c.env.SUPABASE_ANON_KEY) {
-    return c.text('Missing env vars: URL or ANON KEY');
-  }
-  const url = c.env.SUPABASE_URL + '/rest/v1/jobs?select=*';
-  const res = await fetch(url, {
-    headers: {
-      'apikey': c.env.SUPABASE_ANON_KEY,
-      'Authorization': `Bearer ${c.env.SUPABASE_ANON_KEY}`
-    }
-  });
-  return c.text(`Status: ${res.status}\nBody: ${await res.text()}`);
-});
-
 // ==========================================
 // SUPABASE REVERSE PROXY (Custom Domain)
 // ==========================================
@@ -546,20 +532,7 @@ app.all('/*', async (c) => {
     redirect: 'manual'
   });
   
-  const response = await fetch(proxyRequest);
-  
-  if (response.status === 404 || response.status === 401) {
-    const text = await response.text();
-    return c.json({
-      proxy_debug: true,
-      target_url: targetUrl.toString(),
-      has_anon_key_secret: !!c.env.SUPABASE_ANON_KEY,
-      status: response.status,
-      supabase_response: text
-    }, response.status);
-  }
-  
-  return response;
+  return fetch(proxyRequest);
 });
 
 export default app;
