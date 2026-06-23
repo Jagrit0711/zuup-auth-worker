@@ -19,7 +19,7 @@ app.use('/*', cors({
   allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'Prefer', 'Content-Profile', 'Accept-Profile'],
 }));
 
-const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
+const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: string = 'login') => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -162,7 +162,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
         document.addEventListener('alpine:init', () => {
             Alpine.data('authForm', () => ({
                 tab: 'password', 
-                step: 'login', // 'login', 'otp_send', 'otp_verify', 'forgot_password'
+                step: '${defaultStep}', // 'login', 'otp_send', 'otp_verify', 'forgot_password'
                 email: '',
                 password: '',
                 otpArray: ['', '', '', '', '', ''],
@@ -284,6 +284,127 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup') => `
 </html>
 `;
 
+const renderUpdatePasswordUI = (error?: string) => `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zuup Auth | Update Password</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        bg: '#16171D',
+                        card: '#1C1D26',
+                        input: '#232530',
+                        border: '#2C2E3A',
+                        primary: '#F04F67',
+                        primaryHover: '#D63D5C',
+                        text: '#FFFFFF',
+                        muted: '#8F91A3',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #16171D; color: white; }
+        [x-cloak] { display: none !important; }
+    </style>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden">
+    <div class="mb-8 flex flex-col items-center relative z-10">
+        <h1 class="text-2xl font-bold text-white tracking-tight">Zuup <span class="text-primary font-normal">Auth</span></h1>
+    </div>
+
+    <div x-data="updateForm()" class="w-full max-w-[440px] bg-card rounded-[24px] border border-border p-8 md:p-10 shadow-2xl">
+        <div class="text-center mb-8">
+            <h2 class="text-[22px] font-bold text-white mb-2">Update Password</h2>
+            <p class="text-muted text-[15px]">Enter your new password below</p>
+        </div>
+
+        <div x-show="errorMessage" x-text="errorMessage" x-cloak class="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl mb-6 text-sm font-medium text-center"></div>
+        <div x-show="successMessage" x-text="successMessage" x-cloak class="bg-green-500/10 border border-green-500/20 text-[#33C481] p-3 rounded-xl mb-6 text-sm font-medium text-center"></div>
+
+        <form @submit.prevent="submitForm" class="flex flex-col gap-5" x-show="!successMessage">
+            <div class="relative mt-4">
+                <input x-model="password" type="password" placeholder="New Password" required minlength="6" class="w-full px-4 py-3.5 bg-input border border-border rounded-xl text-white focus:outline-none focus:border-primary/50 transition-colors placeholder-muted text-[15px]" />
+            </div>
+
+            <button type="submit" :disabled="loading" class="w-full mt-3 px-4 py-3.5 bg-primary hover:bg-primaryHover disabled:opacity-50 text-white rounded-xl text-[16px] font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(240,79,103,0.15)]">
+                <span x-show="loading" class="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full"></span>
+                <span x-show="!loading">Update Password</span>
+            </button>
+        </form>
+        
+        <div class="mt-6 text-center">
+             <a :href="redirectTo ? '/login?redirect_to=' + encodeURIComponent(redirectTo) : '/login'" class="text-primary hover:underline text-sm font-medium">Back to Login</a>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('updateForm', () => ({
+                password: '',
+                loading: false,
+                errorMessage: '',
+                successMessage: '',
+                accessToken: '',
+                redirectTo: '',
+
+                init() {
+                    // Extract access_token from URL hash (e.g., #access_token=123...)
+                    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                    this.accessToken = hashParams.get('access_token');
+                    
+                    const queryParams = new URLSearchParams(window.location.search);
+                    this.redirectTo = queryParams.get('redirect_to') || '';
+                    
+                    if (!this.accessToken) {
+                        this.errorMessage = 'Invalid or missing recovery token. Please request a new password reset link.';
+                    }
+                },
+
+                async submitForm() {
+                    if (!this.accessToken) {
+                        this.errorMessage = 'Missing token. Cannot update password.';
+                        return;
+                    }
+                    
+                    this.loading = true;
+                    this.errorMessage = '';
+                    
+                    try {
+                        const res = await fetch('/api/update-password', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ access_token: this.accessToken, password: this.password })
+                        });
+                        
+                        const data = await res.json();
+                        if (!res.ok) throw new Error(data.error || 'Failed to update password');
+                        
+                        this.successMessage = 'Password updated successfully! You can now log in.';
+                        this.password = '';
+                    } catch (err) {
+                        this.errorMessage = err.message || 'An error occurred';
+                    } finally {
+                        this.loading = false;
+                    }
+                }
+            }));
+        });
+    </script>
+</body>
+</html>
+`;
+
 app.get('/login', (c) => {
   const error = c.req.query('error');
   const redirectTo = c.req.query('redirect_to');
@@ -297,6 +418,14 @@ app.get('/login', (c) => {
   }
   
   return c.html(renderLoginUI(error, siteName));
+});
+
+app.get('/forgot-password', (c) => {
+  const error = c.req.query('error');
+  const redirectTo = c.req.query('redirect_to');
+  let siteName = 'Zuup';
+  if (redirectTo) { try { siteName = new URL(redirectTo).hostname; } catch(e) {} }
+  return c.html(renderLoginUI(error, siteName, 'forgot_password'));
 });
 
 // ==========================================
@@ -425,11 +554,34 @@ app.post('/api/otp/verify', async (c) => {
   return c.json({ success: true, token: data.session.access_token });
 });
 
+app.get('/update-password', (c) => c.html(renderUpdatePasswordUI()));
+
+app.post('/api/update-password', async (c) => {
+  if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
+  const { access_token, password } = await c.req.json();
+  
+  if (!access_token || !password) {
+      return c.json({ error: 'Missing access_token or password' }, 400);
+  }
+
+  const supabaseAdmin = initSupabase(c);
+  
+  const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(access_token);
+  if (userError || !user) return c.json({ error: userError?.message || 'Invalid token' }, 400);
+  
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(user.id, { password });
+  if (error) return c.json({ error: error.message }, 400);
+  
+  return c.json({ success: true });
+});
+
 app.post('/api/reset-password', async (c) => {
   if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
   const supabaseAdmin = initSupabase(c);
   const { email } = await c.req.json();
-  const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo: 'https://zuup.dev/update-password' });
+  const redirectToUrl = new URL(c.req.url).origin + '/update-password';
+  const finalRedirect = email ? redirectToUrl + '?redirect_to=' + encodeURIComponent(c.req.query('redirect_to') || '') : redirectToUrl;
+  const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo: finalRedirect });
   if (error) return c.json({ error: error.message }, 400);
   return c.json({ success: true });
 });
@@ -491,7 +643,8 @@ app.all('/*', async (c) => {
   const isSupabasePath = targetUrl.pathname.startsWith('/rest/') || 
                          targetUrl.pathname.startsWith('/storage/') || 
                          targetUrl.pathname.startsWith('/realtime/') ||
-                         targetUrl.pathname.startsWith('/graphql/');
+                         targetUrl.pathname.startsWith('/graphql/') ||
+                         targetUrl.pathname.startsWith('/auth/');
                          
   if (!isSupabasePath) {
     return c.json({ error: 'Not a Supabase Path', path: targetUrl.pathname }, 404);
