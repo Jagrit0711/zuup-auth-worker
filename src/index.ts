@@ -75,6 +75,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
         input[type=number] { -moz-appearance: textfield; }
     </style>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4 relative overflow-hidden">
     <!-- Floating Moza Mascot (Bottom Right) -->
@@ -170,6 +171,19 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
             
             <button type="button" x-show="step === 'forgot_password'" @click="setTab('password')" class="w-full mt-1 px-4 py-3 bg-transparent text-muted hover:text-white rounded-xl text-[15px] font-medium transition-colors">
                 Back to Login
+            </button>
+
+            <!-- Passkeys Divider -->
+            <div x-show="step === 'login'" class="flex items-center my-6">
+                <div class="flex-grow border-t border-border"></div>
+                <span class="px-4 text-xs font-semibold text-muted tracking-widest uppercase">Or</span>
+                <div class="flex-grow border-t border-border"></div>
+            </div>
+
+            <!-- Sign in with Passkey Button -->
+            <button type="button" x-show="step === 'login'" @click="signInWithPasskey" :disabled="loading" class="w-full px-4 py-3 bg-input hover:bg-[#2A2D3A] border border-border disabled:opacity-50 text-white rounded-xl text-[15px] font-semibold transition-colors flex items-center justify-center gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-primary"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                Sign in with Passkey
             </button>
         </form>
 
@@ -311,6 +325,48 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                     } catch (err) {
                         this.errorMessage = err.message || 'An error occurred';
                         if (window.turnstile && this.step !== 'otp_verify') turnstile.reset();
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async signInWithPasskey() {
+                    this.loading = true;
+                    this.errorMessage = '';
+                    this.successMessage = '';
+                    try {
+                        // Initialize Supabase Client dynamically using the Zuup Proxy
+                        const sbClient = supabase.createClient(window.location.origin, 'dummy_anon_key', {
+                            auth: { experimental: { passkey: true } }
+                        });
+                        const { data, error } = await sbClient.auth.signInWithPasskey();
+                        
+                        if (error) throw error;
+                        if (!data?.session) throw new Error("No session returned from passkey");
+
+                        // Send the valid token to our backend to get the secure cookie and SSO redirect
+                        const res = await fetch('/api/login/passkey', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                access_token: data.session.access_token,
+                                client_id: this.clientId, 
+                                redirect_uri: this.redirectUri 
+                            })
+                        });
+                        
+                        const backendData = await res.json();
+                        if (!res.ok) throw new Error(backendData.error || 'Failed to establish secure session');
+                        
+                        if (backendData.redirect_to) {
+                            window.location.href = backendData.redirect_to;
+                        } else {
+                            const url = new URL(this.redirectTo);
+                            url.searchParams.set('token', backendData.token);
+                            window.location.href = url.toString();
+                        }
+                    } catch (err) {
+                        this.errorMessage = err.message || 'Passkey authentication failed';
                     } finally {
                         this.loading = false;
                     }
@@ -656,6 +712,35 @@ app.post('/api/login', async (c) => {
   
   const responseData = await handleSSORedirect(c, client_id, redirect_uri, data);
   return c.json({ success: true, ...responseData });
+});
+
+app.post('/api/login/passkey', async (c) => {
+  const { access_token, client_id, redirect_uri } = await c.req.json();
+  if (!access_token) return c.json({ error: 'Missing access_token' }, 400);
+
+  try {
+    if (!c.env.SUPABASE_JWT_SECRET) throw new Error('SUPABASE_JWT_SECRET is missing in environment variables');
+    
+    let secretKey;
+    if (c.env.SUPABASE_JWT_SECRET.trim().startsWith('{')) {
+        const jwkData = JSON.parse(c.env.SUPABASE_JWT_SECRET);
+        const jwk = jwkData.keys ? jwkData.keys[0] : jwkData;
+        secretKey = await importJWK(jwk, jwk.alg || 'HS256');
+    } else {
+        secretKey = new TextEncoder().encode(c.env.SUPABASE_JWT_SECRET);
+    }
+    const { payload } = await jwtVerify(access_token, secretKey);
+    
+    await setSSOCookie(c, access_token);
+    
+    // Construct data object to match what handleSSORedirect expects
+    const data = { session: { access_token }, user: payload };
+    const responseData = await handleSSORedirect(c, client_id, redirect_uri, data);
+    
+    return c.json({ success: true, ...responseData });
+  } catch (err: any) {
+    return c.json({ error: 'Invalid token', details: err.message }, 401);
+  }
 });
 
 app.post('/api/otp/send', async (c) => {
