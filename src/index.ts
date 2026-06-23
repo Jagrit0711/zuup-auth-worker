@@ -1,15 +1,32 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { secureHeaders } from 'hono/secure-headers';
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import { createClient } from '@supabase/supabase-js';
+import { jwtVerify, importJWK } from 'jose';
 
 type Bindings = {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_JWT_SECRET: string;
+  TURNSTILE_SECRET_KEY: string;
+  RATE_LIMITER: any;
+  ZUUP_OAUTH: any;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+app.use('*', secureHeaders({
+  contentSecurityPolicy: {
+    defaultSrc: ["'self'"],
+    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net", "https://challenges.cloudflare.com"],
+    styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+    fontSrc: ["'self'", "https://fonts.gstatic.com"],
+    imgSrc: ["'self'", "data:", "https://raw.githubusercontent.com", "https://zuup.dev"],
+    connectSrc: ["'self'", "https://auth.zuup.dev", "https://*.supabase.co", "https://challenges.cloudflare.com"],
+    frameSrc: ["'self'", "https://challenges.cloudflare.com"],
+  }
+}));
 app.use('/*', cors({
   origin: (origin) => {
     if (origin && (origin.endsWith('.zuup.dev') || origin === 'https://zuup.dev')) return origin;
@@ -18,6 +35,8 @@ app.use('/*', cors({
   credentials: true,
   allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'Prefer', 'Content-Profile', 'Accept-Profile'],
 }));
+
+app.get('/favicon.ico', (c) => c.body(null, 204));
 
 const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: string = 'login') => `
 <!DOCTYPE html>
@@ -28,6 +47,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
     <title>Zuup Auth | Sign In</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>
     <script>
         tailwind.config = {
             theme: {
@@ -137,6 +157,8 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                 </div>
             </div>
 
+            <div x-show="step !== 'otp_verify'" class="cf-turnstile mt-2 flex justify-center" data-sitekey="0x4AAAAAADpuIfvXpUHXndxC" data-theme="dark"></div>
+
             <button type="submit" :disabled="loading" class="w-full mt-3 px-4 py-3.5 bg-primary hover:bg-primaryHover disabled:opacity-50 text-white rounded-xl text-[16px] font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(240,79,103,0.15)]">
                 <span x-show="loading" class="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full"></span>
                 <span x-show="!loading" class="flex items-center gap-2">
@@ -171,6 +193,8 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                 errorMessage: '',
                 successMessage: '',
                 redirectTo: new URLSearchParams(window.location.search).get('redirect_to') || 'https://zuup.dev/dashboard',
+                clientId: new URLSearchParams(window.location.search).get('client_id') || '',
+                redirectUri: new URLSearchParams(window.location.search).get('redirect_uri') || '',
 
                 get buttonText() {
                     if (this.step === 'otp_send') return 'Send Code';
@@ -219,25 +243,34 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                     this.successMessage = '';
 
                     try {
+                        const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
+                        if (this.step !== 'otp_verify' && !turnstileToken) {
+                            throw new Error('Please complete the security check');
+                        }
+
                         if (this.step === 'login') {
                             const res = await fetch('/api/login', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ email: this.email, password: this.password })
+                                body: JSON.stringify({ email: this.email, password: this.password, turnstileToken, client_id: this.clientId, redirect_uri: this.redirectUri })
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || 'Failed to login');
                             
-                            // Append token to URL to bypass cross-site cookie blockers
-                            const url = new URL(this.redirectTo);
-                            url.searchParams.set('token', data.token);
-                            window.location.href = url.toString();
+                            if (data.redirect_to) {
+                                window.location.href = data.redirect_to;
+                            } else {
+                                // Append token to URL to bypass cross-site cookie blockers
+                                const url = new URL(this.redirectTo);
+                                url.searchParams.set('token', data.token);
+                                window.location.href = url.toString();
+                            }
                         } 
                         else if (this.step === 'otp_send') {
                             const res = await fetch('/api/otp/send', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ email: this.email })
+                                body: JSON.stringify({ email: this.email, turnstileToken })
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || 'Failed to send code');
@@ -250,21 +283,25 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                             const res = await fetch('/api/otp/verify', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ email: this.email, token: this.otpCode })
+                                body: JSON.stringify({ email: this.email, token: this.otpCode, client_id: this.clientId, redirect_uri: this.redirectUri })
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || 'Invalid code');
                             
-                            // Append token to URL
-                            const url = new URL(this.redirectTo);
-                            url.searchParams.set('token', data.token);
-                            window.location.href = url.toString();
+                            if (data.redirect_to) {
+                                window.location.href = data.redirect_to;
+                            } else {
+                                // Append token to URL
+                                const url = new URL(this.redirectTo);
+                                url.searchParams.set('token', data.token);
+                                window.location.href = url.toString();
+                            }
                         }
                         else if (this.step === 'forgot_password') {
                             const res = await fetch('/api/reset-password', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ email: this.email })
+                                body: JSON.stringify({ email: this.email, turnstileToken })
                             });
                             const data = await res.json();
                             if (!res.ok) throw new Error(data.error || 'Failed to send reset link');
@@ -273,6 +310,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                         }
                     } catch (err) {
                         this.errorMessage = err.message || 'An error occurred';
+                        if (window.turnstile && this.step !== 'otp_verify') turnstile.reset();
                     } finally {
                         this.loading = false;
                     }
@@ -293,6 +331,7 @@ const renderUpdatePasswordUI = (error?: string) => `
     <title>Zuup Auth | Update Password</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>
     <script>
         tailwind.config = {
             theme: {
@@ -336,6 +375,8 @@ const renderUpdatePasswordUI = (error?: string) => `
             <div class="relative mt-4">
                 <input x-model="password" type="password" placeholder="New Password" required minlength="6" class="w-full px-4 py-3.5 bg-input border border-border rounded-xl text-white focus:outline-none focus:border-primary/50 transition-colors placeholder-muted text-[15px]" />
             </div>
+
+            <div class="cf-turnstile mt-2 flex justify-center" data-sitekey="0x4AAAAAADpuIfvXpUHXndxC" data-theme="dark"></div>
 
             <button type="submit" :disabled="loading" class="w-full mt-3 px-4 py-3.5 bg-primary hover:bg-primaryHover disabled:opacity-50 text-white rounded-xl text-[16px] font-semibold transition-colors flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(240,79,103,0.15)]">
                 <span x-show="loading" class="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full"></span>
@@ -384,7 +425,7 @@ const renderUpdatePasswordUI = (error?: string) => `
                         const res = await fetch('/api/update-password', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ access_token: this.accessToken, password: this.password })
+                            body: JSON.stringify({ access_token: this.accessToken, password: this.password, turnstileToken: document.querySelector('[name="cf-turnstile-response"]')?.value })
                         });
                         
                         const data = await res.json();
@@ -417,6 +458,7 @@ app.get('/login', (c) => {
     } catch(e) {}
   }
   
+  c.header('Cache-Control', 'public, max-age=300');
   return c.html(renderLoginUI(error, siteName));
 });
 
@@ -425,13 +467,16 @@ app.get('/forgot-password', (c) => {
   const redirectTo = c.req.query('redirect_to');
   let siteName = 'Zuup';
   if (redirectTo) { try { siteName = new URL(redirectTo).hostname; } catch(e) {} }
+  c.header('Cache-Control', 'public, max-age=300');
   return c.html(renderLoginUI(error, siteName, 'forgot_password'));
 });
 
 // ==========================================
 // 🛠️ "WEIRD TECHNICAL" ROOT LANDING PAGE
 // ==========================================
-app.get('/', (c) => c.html(`
+app.get('/', (c) => {
+  c.header('Cache-Control', 'public, max-age=3600');
+  return c.html(`
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -506,7 +551,8 @@ app.get('/', (c) => c.html(`
     </script>
 </body>
 </html>
-`));
+`);
+});
 
 const initSupabase = (c: any) => {
   // Gracefully handle missing variables locally so Hono doesn't crash on init
@@ -515,30 +561,111 @@ const initSupabase = (c: any) => {
   return createClient(url, key, { auth: { persistSession: false } });
 };
 
-const setSSOCookie = (c: any, token: string) => {
-  setCookie(c, 'zuup_session', token, { 
+const generateFingerprint = async (c: any) => {
+  const ip = c.req.header('cf-connecting-ip') || 'unknown';
+  const ua = c.req.header('user-agent') || 'unknown';
+  const data = new TextEncoder().encode(ip + ua);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+};
+
+const setSSOCookie = async (c: any, token: string) => {
+  setCookie(c, '__Secure-zuup_session', token, { 
     path: '/', 
     secure: true, 
     httpOnly: true, 
     sameSite: 'None', // Critical: 'None' allows cross-site frontend to authenticate against production auth server!
     maxAge: 60 * 60 * 24 * 7 
   });
+  const fingerprint = await generateFingerprint(c);
+  setCookie(c, '__Secure-zuup_fingerprint', fingerprint, {
+    path: '/', secure: true, httpOnly: true, sameSite: 'None', maxAge: 60 * 60 * 24 * 7
+  });
+};
+
+const verifyTurnstile = async (c: any, token: string) => {
+  if (!c.env.TURNSTILE_SECRET_KEY) return true; // Bypass if not configured
+  if (!token) return false;
+  const formData = new FormData();
+  formData.append('secret', c.env.TURNSTILE_SECRET_KEY);
+  formData.append('response', token);
+  formData.append('remoteip', c.req.header('cf-connecting-ip') || '');
+  const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { body: formData, method: 'POST' });
+  const outcome = await result.json();
+  return outcome.success;
+};
+
+const checkRateLimit = async (c: any) => {
+  if (!c.env.RATE_LIMITER) return true;
+  const ip = c.req.header('cf-connecting-ip') || 'unknown';
+  const key = `rl_${ip}`;
+  const attempts = await c.env.RATE_LIMITER.get(key);
+  const count = attempts ? parseInt(attempts) : 0;
+  if (count >= 5) return false;
+  await c.env.RATE_LIMITER.put(key, (count + 1).toString(), { expirationTtl: 900 });
+  return true;
+};
+
+const resetRateLimit = async (c: any) => {
+  if (!c.env.RATE_LIMITER) return;
+  const ip = c.req.header('cf-connecting-ip') || 'unknown';
+  await c.env.RATE_LIMITER.delete(`rl_${ip}`);
+};
+
+const handleSSORedirect = async (c: any, client_id: string, redirect_uri: string, data: any) => {
+  if (client_id && redirect_uri && c.env.ZUUP_OAUTH) {
+    const clientDataStr = await c.env.ZUUP_OAUTH.get(`apikey_${client_id}`);
+    if (clientDataStr) {
+      const clientData = JSON.parse(clientDataStr);
+      try {
+        const origin = new URL(redirect_uri).origin;
+        if (clientData.allowed_origins.includes(origin) || clientData.allowed_origins.includes('*')) {
+          const code = 'zcode_' + crypto.randomUUID().replace(/-/g, '');
+          await c.env.ZUUP_OAUTH.put(`authcode_${code}`, JSON.stringify({
+            access_token: data.session.access_token,
+            user: data.user,
+          }), { expirationTtl: 600 });
+          
+          const url = new URL(redirect_uri);
+          url.searchParams.set('code', code);
+          return { redirect_to: url.toString() };
+        }
+      } catch (e) {
+        // Invalid redirect_uri format
+      }
+    }
+  }
+  return { token: data.session.access_token };
 };
 
 app.post('/api/login', async (c) => {
   if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
+  const { email, password, turnstileToken, client_id, redirect_uri } = await c.req.json();
+  if (!await verifyTurnstile(c, turnstileToken)) return c.json({ error: 'Security check failed' }, 400);
+  if (!await checkRateLimit(c)) return c.json({ error: 'Too many attempts. Please try again in 15 minutes.' }, 429);
+  
+  if (!email || typeof email !== 'string' || !email.includes('@') || !password || typeof password !== 'string' || password.length < 6) {
+    return c.json({ error: 'Invalid email or password format' }, 400);
+  }
   const supabaseAdmin = initSupabase(c);
-  const { email, password } = await c.req.json();
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
   if (error) return c.json({ error: error.message }, 400);
-  setSSOCookie(c, data.session.access_token);
-  return c.json({ success: true, token: data.session.access_token });
+  await setSSOCookie(c, data.session.access_token);
+  await resetRateLimit(c);
+  
+  const responseData = await handleSSORedirect(c, client_id, redirect_uri, data);
+  return c.json({ success: true, ...responseData });
 });
 
 app.post('/api/otp/send', async (c) => {
   if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
+  const { email, turnstileToken } = await c.req.json();
+  if (!await verifyTurnstile(c, turnstileToken)) return c.json({ error: 'Security check failed' }, 400);
+  if (!await checkRateLimit(c)) return c.json({ error: 'Too many attempts. Please try again in 15 minutes.' }, 429);
+  
+  if (!email || typeof email !== 'string' || !email.includes('@')) return c.json({ error: 'Invalid email format' }, 400);
   const supabaseAdmin = initSupabase(c);
-  const { email } = await c.req.json();
   const { error } = await supabaseAdmin.auth.signInWithOtp({ email });
   if (error) return c.json({ error: error.message }, 400);
   return c.json({ success: true });
@@ -546,22 +673,33 @@ app.post('/api/otp/send', async (c) => {
 
 app.post('/api/otp/verify', async (c) => {
   if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
+  if (!await checkRateLimit(c)) return c.json({ error: 'Too many attempts. Please try again in 15 minutes.' }, 429);
+  const { email, token, client_id, redirect_uri } = await c.req.json();
+  if (!email || typeof email !== 'string' || !email.includes('@') || !token || typeof token !== 'string') {
+    return c.json({ error: 'Invalid input format' }, 400);
+  }
   const supabaseAdmin = initSupabase(c);
-  const { email, token } = await c.req.json();
   const { data, error } = await supabaseAdmin.auth.verifyOtp({ email, token, type: 'email' });
   if (error) return c.json({ error: error.message }, 400);
-  setSSOCookie(c, data.session.access_token);
-  return c.json({ success: true, token: data.session.access_token });
+  await setSSOCookie(c, data.session.access_token);
+  await resetRateLimit(c);
+  
+  const responseData = await handleSSORedirect(c, client_id, redirect_uri, data);
+  return c.json({ success: true, ...responseData });
 });
 
-app.get('/update-password', (c) => c.html(renderUpdatePasswordUI()));
+app.get('/update-password', (c) => {
+  c.header('Cache-Control', 'public, max-age=300');
+  return c.html(renderUpdatePasswordUI());
+});
 
 app.post('/api/update-password', async (c) => {
   if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
-  const { access_token, password } = await c.req.json();
+  const { access_token, password, turnstileToken } = await c.req.json();
+  if (!await verifyTurnstile(c, turnstileToken)) return c.json({ error: 'Security check failed' }, 400);
   
-  if (!access_token || !password) {
-      return c.json({ error: 'Missing access_token or password' }, 400);
+  if (!access_token || typeof access_token !== 'string' || !password || typeof password !== 'string' || password.length < 6) {
+      return c.json({ error: 'Invalid token or password format' }, 400);
   }
 
   const supabaseAdmin = initSupabase(c);
@@ -577,8 +715,12 @@ app.post('/api/update-password', async (c) => {
 
 app.post('/api/reset-password', async (c) => {
   if (!c.env.SUPABASE_URL) return c.json({ error: 'Supabase URL missing in server environment (.dev.vars)' }, 500);
+  const { email, turnstileToken } = await c.req.json();
+  if (!await verifyTurnstile(c, turnstileToken)) return c.json({ error: 'Security check failed' }, 400);
+  if (!await checkRateLimit(c)) return c.json({ error: 'Too many attempts. Please try again in 15 minutes.' }, 429);
+  
+  if (!email || typeof email !== 'string' || !email.includes('@')) return c.json({ error: 'Invalid email format' }, 400);
   const supabaseAdmin = initSupabase(c);
-  const { email } = await c.req.json();
   const redirectToUrl = new URL(c.req.url).origin + '/update-password';
   const finalRedirect = email ? redirectToUrl + '?redirect_to=' + encodeURIComponent(c.req.query('redirect_to') || '') : redirectToUrl;
   const { error } = await supabaseAdmin.auth.resetPasswordForEmail(email, { redirectTo: finalRedirect });
@@ -592,7 +734,7 @@ app.get('/api/me', async (c) => {
   }
   
   const authHeader = c.req.header('Authorization');
-  let token = getCookie(c, 'zuup_session');
+  let token = getCookie(c, '__Secure-zuup_session');
   
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.split(' ')[1];
@@ -603,30 +745,106 @@ app.get('/api/me', async (c) => {
   if (!token) {
     return c.json({ 
       loggedIn: false, 
-      error: 'zuup_session cookie is missing in request',
+      error: '__Secure-zuup_session cookie is missing in request',
       debug_cookies_received: allCookies,
       debug_origin: c.req.header('Origin') || 'unknown'
     }, 401);
   }
 
-  const supabaseAdmin = initSupabase(c);
-  const { data, error } = await supabaseAdmin.auth.getUser(token);
-  
-  if (error || !data.user) {
-    return c.json({ 
-      loggedIn: false, 
-      error: 'Token is invalid or expired', 
-      details: error?.message 
-    }, 401);
+  try {
+    if (!c.env.SUPABASE_JWT_SECRET) {
+        throw new Error('SUPABASE_JWT_SECRET is missing in environment variables');
+    }
+    let secretKey;
+    if (c.env.SUPABASE_JWT_SECRET.trim().startsWith('{')) {
+        const jwkData = JSON.parse(c.env.SUPABASE_JWT_SECRET);
+        const jwk = jwkData.keys ? jwkData.keys[0] : jwkData;
+        secretKey = await importJWK(jwk, jwk.alg || 'HS256');
+    } else {
+        secretKey = new TextEncoder().encode(c.env.SUPABASE_JWT_SECRET);
+    }
+    const { payload } = await jwtVerify(token, secretKey);
+    
+    // Fingerprint verification
+    const expectedFingerprint = getCookie(c, '__Secure-zuup_fingerprint');
+    const actualFingerprint = await generateFingerprint(c);
+    
+    // Only enforce fingerprint if token came from a cookie
+    if (!authHeader && (!expectedFingerprint || expectedFingerprint !== actualFingerprint)) {
+        return c.json({ loggedIn: false, error: 'Session fingerprint mismatch - possible session hijacking' }, 401);
+    }
+
+    return c.json({ loggedIn: true, user: payload });
+  } catch (err: any) {
+    return c.json({ loggedIn: false, error: 'Invalid or expired token', details: err.message }, 401);
   }
-  
-  return c.json({ loggedIn: true, user: data.user });
 });
 
 app.get('/api/logout', (c) => {
-  deleteCookie(c, 'zuup_session', { path: '/' });
+  deleteCookie(c, '__Secure-zuup_session', { path: '/', secure: true });
+  deleteCookie(c, '__Secure-zuup_fingerprint', { path: '/', secure: true });
   const redirectTo = c.req.query('redirect_to') || 'https://zuup.dev';
   return c.redirect(redirectTo);
+});
+
+// ==========================================
+// ZUUP SSO (OAUTH IDENTITY PROVIDER)
+// ==========================================
+
+// Developer Endpoint: Generate a new API Client ID & Secret
+app.post('/api/developer/keys', async (c) => {
+  if (!c.env.ZUUP_OAUTH) return c.json({ error: 'OAuth KV not configured' }, 500);
+  
+  // Basic security: only allow logged in users (e.g. you) to create apps
+  // In a real scenario, you'd check if the user is an admin or in a 'developers' table.
+  const token = getCookie(c, '__Secure-zuup_session');
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+
+  const { allowed_origins, app_name } = await c.req.json();
+  if (!allowed_origins || !Array.isArray(allowed_origins)) return c.json({ error: 'Invalid allowed_origins list' }, 400);
+
+  const client_id = 'zuup_' + crypto.randomUUID().replace(/-/g, '');
+  const client_secret = 'zsec_' + crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+
+  await c.env.ZUUP_OAUTH.put(`apikey_${client_id}`, JSON.stringify({
+    client_secret,
+    app_name: app_name || 'My App',
+    allowed_origins
+  }));
+
+  return c.json({ client_id, client_secret, allowed_origins });
+});
+
+// OAuth Endpoint: Exchange Authorization Code for JWT
+app.post('/api/oauth/token', async (c) => {
+  if (!c.env.ZUUP_OAUTH) return c.json({ error: 'OAuth KV not configured' }, 500);
+
+  const { client_id, client_secret, code } = await c.req.json();
+  if (!client_id || !client_secret || !code) return c.json({ error: 'Missing parameters' }, 400);
+
+  // 1. Verify Client Credentials
+  const clientDataStr = await c.env.ZUUP_OAUTH.get(`apikey_${client_id}`);
+  if (!clientDataStr) return c.json({ error: 'Invalid client_id' }, 401);
+  const clientData = JSON.parse(clientDataStr);
+  
+  if (clientData.client_secret !== client_secret) {
+    return c.json({ error: 'Invalid client_secret' }, 401);
+  }
+
+  // 2. Verify Authorization Code
+  const codeDataStr = await c.env.ZUUP_OAUTH.get(`authcode_${code}`);
+  if (!codeDataStr) return c.json({ error: 'Invalid or expired authorization code' }, 400);
+  
+  // Burn the code so it cannot be reused!
+  await c.env.ZUUP_OAUTH.delete(`authcode_${code}`);
+
+  const codeData = JSON.parse(codeDataStr);
+
+  // Return the user's token and profile data to the third party app
+  return c.json({
+    access_token: codeData.access_token,
+    user: codeData.user
+  });
 });
 
 // ==========================================

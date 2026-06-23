@@ -1,102 +1,113 @@
-# Zuup Auth Infrastructure (OAuth 2.1 Provider)
+# Zuup Auth Gateway & SSO Provider 🚀
 
-This is the central, highly-secure authentication worker for all of Zuup's services (`auth.zuup.dev`). 
+Zuup Auth is a high-performance, edge-first authentication proxy built on Cloudflare Workers and Hono. It acts as a blazing-fast centralized login gateway for all your services, acting as a direct proxy to your Supabase backend while providing enterprise-grade security features out of the box.
 
-It acts as a gateway to Supabase, entirely hiding the database schema and preventing direct database communication from the frontend for sensitive authentication operations. It serves a custom Neo-Brutalist HTML UI natively, featuring a 6-digit OTP code, Password Reset flow, and dynamic routing.
+Additionally, Zuup Auth functions as a full **OAuth 2.0 Identity Provider (IdP)**. It allows third-party websites or your own microservices to easily implement "Sign in with Zuup" functionality!
 
-## 🚀 How to Deploy to Cloudflare
+## 🌟 Features
+- **Supabase Reverse Proxy:** Intercepts frontend requests to Supabase and seamlessly injects your hidden Supabase anon/service-role keys securely at the edge.
+- **"Sign In With Zuup" SSO:** Fully functional OAuth 2.0 flow for third-party developer integrations.
+- **Enterprise Bot Protection:** Seamless Cloudflare Turnstile integration directly in the Alpine.js forms.
+- **Global Rate Limiting:** Backed by Cloudflare KV, restricting malicious IP addresses from brute-forcing logins.
+- **Session Fingerprinting:** Binds user sessions to their IP and User-Agent to prevent session hijacking.
+- **Edge JWT Verification:** Instant edge verification using `jose` before requests hit Supabase.
 
-Because this worker uses Hono, it's incredibly lightweight and deploys instantly to Cloudflare Workers.
+---
 
-### 1. Deploy the Code
-Run the following command inside this folder:
+## 🛠️ How to use "Sign In With Zuup" (SSO Integration)
+
+If you have a separate website (e.g., `https://my-awesome-app.com`) and you want users to log in using their Zuup credentials, you can easily integrate Zuup Auth as your SSO Provider.
+
+### Step 1: Generate an API Key
+First, you (the platform admin) need to generate a Client ID and Secret for the new application. Run this `curl` command against your Zuup Auth instance (making sure to pass your active login session cookie to authorize the request):
+
+```bash
+curl -X POST https://auth.zuup.dev/api/developer/keys \
+  -H "Content-Type: application/json" \
+  -H "Cookie: __Secure-zuup_session=YOUR_LOGIN_TOKEN" \
+  -d '{
+    "app_name": "My Awesome App",
+    "allowed_origins": ["https://my-awesome-app.com"]
+  }'
+```
+
+**Response:**
+```json
+{
+  "client_id": "zuup_a1b2c3d4...",
+  "client_secret": "zsec_x9y8z7...",
+  "allowed_origins": ["https://my-awesome-app.com"]
+}
+```
+
+Keep the `client_id` and `client_secret` safe!
+
+### Step 2: The Login Redirect
+On your application (`my-awesome-app.com`), create a "Sign In with Zuup" button. When the user clicks it, redirect them to the Zuup Auth login page, passing your `client_id` and a `redirect_uri` where they should be sent after a successful login.
+
+```html
+<a href="https://auth.zuup.dev/login?client_id=zuup_a1b2c3d4...&redirect_uri=https://my-awesome-app.com/callback">
+  Sign in with Zuup
+</a>
+```
+
+### Step 3: Receive the Authorization Code
+The user will see the beautiful Zuup Auth login UI. Once they successfully enter their credentials (or OTP) and pass the Turnstile security check, Zuup Auth will instantly redirect them back to your application with a short-lived `code`:
+
+```text
+https://my-awesome-app.com/callback?code=zcode_123456789...
+```
+
+### Step 4: Exchange the Code for User Data
+Now, your application's **Backend** must securely exchange this `code` for the user's actual session token and profile data. 
+
+*(Warning: Never expose your `client_secret` to the browser. This step MUST happen on your server!)*
+
+```javascript
+// Example Node.js Backend Code
+const response = await fetch('https://auth.zuup.dev/api/oauth/token', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    client_id: 'zuup_a1b2c3d4...',
+    client_secret: 'zsec_x9y8z7...',
+    code: req.query.code // The code from the URL
+  })
+});
+
+const data = await response.json();
+
+console.log(data.access_token); // The user's Supabase JWT!
+console.log(data.user);         // The user's profile metadata!
+```
+
+**You are now fully authenticated!** You can use `data.access_token` to make direct requests to Supabase on behalf of the user, or drop a cookie to log them into your application.
+
+---
+
+## 🔒 Environment Setup
+
+To run Zuup Auth, ensure you have the following secrets in your `.dev.vars` file (and securely uploaded to Cloudflare via `wrangler secret put`):
+
+```ini
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=eyJhbGci...
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
+SUPABASE_JWT_SECRET={"keys":[{"kty":"EC","crv":"P-256",...}]}
+TURNSTILE_SECRET_KEY=0x4AAAAAA...
+```
+
+You must also have your KV databases bound in `wrangler.jsonc`:
+- `RATE_LIMITER`
+- `ZUUP_OAUTH`
+
+## 🚀 Running Locally
+```bash
+npm install
+npm run dev
+```
+
+## 🌐 Deployment
 ```bash
 npx wrangler deploy
-```
-
-### 2. Set Production Secrets (CRITICAL)
-Your production worker needs the Supabase URL and the **Service Role Key** (NOT the anon key). Since this is running securely on the server side, it is safe to use the Service Role Key here to bypass RLS for auth operations.
-
-Run these two commands in your terminal and paste your values when prompted:
-```bash
-npx wrangler secret put SUPABASE_URL
-```
-```bash
-npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
-```
-
-## 💻 Local Development
-
-To run this locally alongside your main Zuup site:
-1. Ensure your `.dev.vars` file is present in this folder with your Supabase keys.
-2. Run `npm run dev`.
-3. The auth worker will be available at `http://localhost:8787/login`.
-
-## 🔄 Pushing to a separate GitHub Repo
-
-To keep this completely decoupled from the `zuup-main` frontend repository:
-
-```bash
-# Inside zuup-auth-worker folder:
-git init
-git add .
-git commit -m "Initial commit of Auth Worker"
-git branch -M main
-git remote add origin https://github.com/Jagrit0711/zuup-auth-worker.git
-git push -u origin main
-```
-*(Make sure you create the `zuup-auth-worker` repository on GitHub first!)*
-# zuup-auth-worker
-
-## 🔌 How to Integrate Zuup Auth into Any Site
-
-Integrating this centralized Auth Worker into any of your frontends (like `zuup.dev`, `careers.zuup.dev`, etc.) is incredibly simple.
-
-### 1. Redirect to Login
-To prompt a user to log in, simply redirect them to the Auth Worker and pass your site's URL as the `redirect_to` query parameter:
-
-```javascript
-// Example: Sending user to login from a React component
-const handleLoginClick = () => {
-  const myUrl = window.location.href; // e.g., https://careers.zuup.dev/dashboard
-  window.location.href = \`https://auth.zuup.dev/login?redirect_to=\${encodeURIComponent(myUrl)}\`;
-};
-```
-*The Auth Worker will automatically say "Sign in to careers.zuup.dev" based on the URL you pass!*
-
-### 2. Verify Authentication (SSO)
-When the user successfully logs in, the Auth Worker sets a secure `zuup_session` HTTP-only cookie on the `.zuup.dev` domain and redirects them back to your site. 
-
-To check if a user is logged in, your frontend just needs to make a `fetch` request to the Auth Worker's `/api/me` endpoint.
-
-```javascript
-// Example: Checking if a user is logged in
-const checkAuth = async () => {
-  try {
-    const res = await fetch('https://auth.zuup.dev/api/me', {
-      // CRITICAL: You must include credentials so the secure cookie is sent!
-      credentials: 'include' 
-    });
-    
-    if (res.ok) {
-      const data = await res.json();
-      console.log("User is logged in!", data.user);
-    } else {
-      console.log("User is not logged in.");
-      // You can redirect them back to login here
-    }
-  } catch (err) {
-    console.error("Auth check failed", err);
-  }
-};
-```
-
-### 3. Log Out
-To log a user out across the entire Zuup ecosystem, redirect them to the `/api/logout` endpoint:
-
-```javascript
-const handleLogout = () => {
-  const myUrl = window.location.href;
-  window.location.href = \`https://auth.zuup.dev/api/logout?redirect_to=\${encodeURIComponent(myUrl)}\`;
-};
 ```

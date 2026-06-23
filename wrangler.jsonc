@@ -5,6 +5,15 @@
   "compatibility_date": "2024-05-29",
   "observability": {
     "enabled": true
-  }
-  // Secrets like SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set via `wrangler secret put`
+  },
+   "kv_namespaces": [
+    {
+      "binding": "RATE_LIMITER",
+      "id": "397b52dc066d4e2b8aff82d90f8b12a7"
+    },
+    {
+      "binding": "ZUUP_OAUTH",
+      "id": "1acf18e2335342ba876a8063a1da5bfc"
+    }
+  ]
 }
