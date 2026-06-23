@@ -883,14 +883,15 @@ app.all('/*', async (c) => {
     headers.set('apikey', c.env.SUPABASE_ANON_KEY);
     
     // The frontend supabase-js client also sends the anon key in the Authorization header by default.
-    // If it sent the fake placeholder key, replace it with the real one!
+    // If it sent a fake dummy key (not a valid JWT), replace it with the real one!
     const authHeader = headers.get('Authorization');
-    if (!authHeader || authHeader === 'Bearer placeholder_key') {
+    if (!authHeader || (authHeader.startsWith('Bearer ') && authHeader.split('.').length !== 3)) {
       headers.set('Authorization', `Bearer ${c.env.SUPABASE_ANON_KEY}`);
     }
     
     // WebSockets and some endpoints pass the apikey in the URL
-    if (targetUrl.searchParams.get('apikey') === 'placeholder_key') {
+    const urlApiKey = targetUrl.searchParams.get('apikey');
+    if (urlApiKey && urlApiKey.split('.').length !== 3) {
       targetUrl.searchParams.set('apikey', c.env.SUPABASE_ANON_KEY);
     }
   }

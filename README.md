@@ -85,6 +85,35 @@ console.log(data.user);         // The user's profile metadata!
 
 ---
 
+## 🛡️ Hiding your Supabase Anon Key (Reverse Proxy)
+
+You no longer need to expose your real `SUPABASE_URL` or `SUPABASE_ANON_KEY` to the internet! Zuup Auth has a built-in reverse proxy that perfectly mimics the Supabase API, while secretly injecting your actual keys on the backend before the request reaches Supabase.
+
+In your frontend application's `.env` file, simply replace your Supabase credentials with your Zuup Auth domain and a dummy key:
+
+```env
+VITE_SUPABASE_URL=https://auth.zuup.dev
+VITE_SUPABASE_ANON_KEY=dummy_anon_key
+```
+
+Then initialize the standard `supabase-js` client exactly as you normally would:
+
+```javascript
+import { createClient } from '@supabase/supabase-js'
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+// This sends requests to https://auth.zuup.dev
+// Zuup Auth intercepts the request, replaces 'dummy_anon_key' with the real anon key, 
+// and securely proxies the request to your actual Supabase project!
+const supabase = createClient(supabaseUrl, supabaseAnonKey)
+```
+
+No more leaked anon keys!
+
+---
+
 ## 🔒 Environment Setup
 
 To run Zuup Auth, ensure you have the following secrets in your `.dev.vars` file (and securely uploaded to Cloudflare via `wrangler secret put`):
