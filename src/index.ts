@@ -502,9 +502,11 @@ const renderUpdatePasswordUI = (error?: string) => `
 </html>
 `;
 
-app.get('/login', (c) => {
+app.get('/login', async (c) => {
   const error = c.req.query('error');
   const redirectTo = c.req.query('redirect_to');
+  const clientId = c.req.query('client_id');
+  const redirectUri = c.req.query('redirect_uri');
   let siteName = 'Zuup';
   
   if (redirectTo) {
@@ -513,8 +515,41 @@ app.get('/login', (c) => {
       siteName = url.hostname;
     } catch(e) {}
   }
+
+  // Check for existing session to auto-login
+  const token = getCookie(c, '__Secure-zuup_session');
+  if (token && c.env.SUPABASE_JWT_SECRET) {
+    try {
+      let secretKey;
+      if (c.env.SUPABASE_JWT_SECRET.trim().startsWith('{')) {
+          const jwkData = JSON.parse(c.env.SUPABASE_JWT_SECRET);
+          const jwk = jwkData.keys ? jwkData.keys[0] : jwkData;
+          secretKey = await importJWK(jwk, jwk.alg || 'HS256');
+      } else {
+          secretKey = new TextEncoder().encode(c.env.SUPABASE_JWT_SECRET);
+      }
+      const { payload } = await jwtVerify(token, secretKey);
+      
+      // Valid token, we can auto-redirect
+      const data = { session: { access_token: token }, user: payload };
+      const responseData = await handleSSORedirect(c, clientId || '', redirectUri || '', data);
+      
+      if (responseData.redirect_to) {
+        return c.redirect(responseData.redirect_to);
+      } else if (redirectTo) {
+        const url = new URL(redirectTo);
+        url.searchParams.set('token', responseData.token || token);
+        return c.redirect(url.toString());
+      } else {
+        return c.redirect('https://zuup.dev/dashboard');
+      }
+    } catch (err: any) {
+      // Invalid or expired token, just ignore and render login UI
+    }
+  }
   
-  c.header('Cache-Control', 'public, max-age=300');
+  // Do NOT cache this page anymore since it depends on the user's cookies
+  c.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
   return c.html(renderLoginUI(error, siteName));
 });
 
@@ -632,11 +667,11 @@ const setSSOCookie = async (c: any, token: string) => {
     secure: true, 
     httpOnly: true, 
     sameSite: 'None', // Critical: 'None' allows cross-site frontend to authenticate against production auth server!
-    maxAge: 60 * 60 * 24 * 7 
+    maxAge: 60 * 60 * 24 * 365 
   });
   const fingerprint = await generateFingerprint(c);
   setCookie(c, '__Secure-zuup_fingerprint', fingerprint, {
-    path: '/', secure: true, httpOnly: true, sameSite: 'None', maxAge: 60 * 60 * 24 * 7
+    path: '/', secure: true, httpOnly: true, sameSite: 'None', maxAge: 60 * 60 * 24 * 365
   });
 };
 
