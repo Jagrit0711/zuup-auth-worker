@@ -12,6 +12,8 @@ type Bindings = {
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_JWT_SECRET: string;
   TURNSTILE_SECRET_KEY: string;
+  RAZORPAY_KEY_ID: string;
+  RAZORPAY_KEY_SECRET: string;
   RATE_LIMITER: any;
   ZUUP_OAUTH: any;
 };
@@ -967,6 +969,91 @@ app.post('/api/oauth/token', async (c) => {
     access_token: codeData.access_token,
     user: codeData.user
   });
+});
+
+// ==========================================
+// CENTRALIZED PAYMENT GATEWAY (RAZORPAY)
+// ==========================================
+
+app.post('/api/payments/create-order', async (c) => {
+  const apikey = c.req.header('apikey');
+  if (!c.env.GATEWAY_SECRET || apikey !== c.env.GATEWAY_SECRET) {
+    return c.json({ error: 'Unauthorized: Invalid Gateway Secret' }, 401);
+  }
+  
+  const body = await c.req.json();
+  const { amount, currency = "INR", notes = {}, receipt } = body;
+  
+  if (!amount) return c.json({ error: 'Amount is required' }, 400);
+  if (!c.env.RAZORPAY_KEY_ID || !c.env.RAZORPAY_KEY_SECRET) {
+    return c.json({ error: 'Razorpay keys not configured on gateway' }, 500);
+  }
+
+  const authString = btoa(`${c.env.RAZORPAY_KEY_ID}:${c.env.RAZORPAY_KEY_SECRET}`);
+  const response = await fetch("https://api.razorpay.com/v1/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Basic ${authString}`
+    },
+    body: JSON.stringify({
+      amount: Math.round(amount * 100), // convert to paise
+      currency,
+      receipt: receipt || `rcpt_${Math.floor(Date.now() / 1000)}`,
+      notes
+    })
+  });
+  
+  if (!response.ok) {
+    const err = await response.json();
+    return c.json({ error: err }, response.status);
+  }
+  
+  const order = await response.json();
+  return c.json({ orderId: order.id, amount: order.amount, keyId: c.env.RAZORPAY_KEY_ID });
+});
+
+// HMAC verification Helper using Web Crypto
+async function verifyRazorpaySignature(orderId: string, paymentId: string, signature: string, secret: string) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify']
+  );
+  
+  const data = encoder.encode(orderId + '|' + paymentId);
+  const signatureBytes = new Uint8Array(signature.match(/[\da-f]{2}/gi)!.map(h => parseInt(h, 16)));
+  
+  return crypto.subtle.verify('HMAC', key, signatureBytes, data);
+}
+
+app.post('/api/payments/verify', async (c) => {
+  const apikey = c.req.header('apikey');
+  if (!c.env.GATEWAY_SECRET || apikey !== c.env.GATEWAY_SECRET) {
+    return c.json({ error: 'Unauthorized: Invalid Gateway Secret' }, 401);
+  }
+
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = await c.req.json();
+  
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return c.json({ error: 'Missing payment signature details' }, 400);
+  }
+
+  const isValid = await verifyRazorpaySignature(
+    razorpay_order_id,
+    razorpay_payment_id,
+    razorpay_signature,
+    c.env.RAZORPAY_KEY_SECRET
+  );
+
+  if (!isValid) {
+    return c.json({ error: 'Invalid payment signature' }, 400);
+  }
+
+  return c.json({ success: true, message: 'Payment verified successfully' });
 });
 
 // ==========================================

@@ -85,15 +85,17 @@ console.log(data.user);         // The user's profile metadata!
 
 ---
 
-## 🛡️ Hiding your Supabase Anon Key (Reverse Proxy)
+## 🛡️ Zero-Leakage Gateway Secret Architecture
 
-You no longer need to expose your real `SUPABASE_URL` or `SUPABASE_ANON_KEY` to the internet! Zuup Auth has a built-in reverse proxy that perfectly mimics the Supabase API, while secretly injecting your actual keys on the backend before the request reaches Supabase.
+You no longer need to expose your real `SUPABASE_URL` or `SUPABASE_ANON_KEY` to the internet! Zuup Auth has a built-in reverse proxy that strictly gates access and perfectly mimics the Supabase API, while secretly injecting your actual keys on the backend before the request reaches Supabase.
 
-In your frontend application's `.env` file, simply replace your Supabase credentials with your Zuup Auth domain and a dummy key:
+To achieve 100% data security, you configure a custom `GATEWAY_SECRET` in this worker. Any request coming to the worker must pass this exact secret, otherwise it is immediately blocked.
+
+In your frontend application's `.env` file, replace your real Supabase credentials with your Zuup Auth domain and your custom Gateway Secret:
 
 ```env
 VITE_SUPABASE_URL=https://auth.zuup.dev
-VITE_SUPABASE_ANON_KEY=dummy_anon_key
+VITE_SUPABASE_ANON_KEY=my_super_secret_gateway_key_99
 ```
 
 Then initialize the standard `supabase-js` client exactly as you normally would:
@@ -102,15 +104,66 @@ Then initialize the standard `supabase-js` client exactly as you normally would:
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const gatewaySecret = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 // This sends requests to https://auth.zuup.dev
-// Zuup Auth intercepts the request, replaces 'dummy_anon_key' with the real anon key, 
-// and securely proxies the request to your actual Supabase project!
-const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Zuup Auth intercepts the request, validates the 'gatewaySecret', 
+// replaces it with the real anon key, and securely proxies the request to your actual Supabase project!
+const supabase = createClient(supabaseUrl, gatewaySecret)
 ```
 
-No more leaked anon keys!
+No more leaked anon keys, and 0% chance of direct database access even if your frontend source code goes public!
+
+---
+
+## 💳 Centralized Secure Payment Gateway (Razorpay)
+
+Zuup Auth acts as a highly secure, centralized payment processor for all your sites. By moving your Razorpay keys entirely into the worker, we prevent front-end tampering and completely secure the payment flow. 
+
+When a user initiates a checkout on your frontend, your site's server calculates the correct amount from the database, then securely requests an order from Zuup Auth using your `GATEWAY_SECRET`. The browser cannot modify the amount!
+
+**Step 1: Create an Order**
+From your backend/SSR framework, call Zuup Auth to generate an order:
+
+```javascript
+const response = await fetch("https://auth.zuup.dev/api/payments/create-order", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "apikey": process.env.GATEWAY_SECRET
+  },
+  body: JSON.stringify({
+    amount: 1500, // Amount in Rupees (Worker converts to paise automatically)
+    currency: "INR",
+    notes: { email: "user@example.com", item: "Ticket" }
+  })
+});
+const { orderId, amount, keyId } = await response.json();
+```
+*Pass this `orderId` and `keyId` to your frontend's Razorpay checkout script.*
+
+**Step 2: Verify the Payment Signature**
+Once the user pays, Razorpay returns a signature. Do NOT verify this on the client. Send it to your backend, which forwards it to Zuup Auth for cryptographic verification:
+
+```javascript
+const verifyRes = await fetch("https://auth.zuup.dev/api/payments/verify", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "apikey": process.env.GATEWAY_SECRET
+  },
+  body: JSON.stringify({
+    razorpay_order_id: "order_XYZ",
+    razorpay_payment_id: "pay_XYZ",
+    razorpay_signature: "a1b2c3d4..."
+  })
+});
+
+const { success } = await verifyRes.json();
+if (success) {
+  // Payment is 100% verified and secure. Proceed with database updates.
+}
+```
 
 ---
 
@@ -124,6 +177,7 @@ SUPABASE_ANON_KEY=eyJhbGci...
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
 SUPABASE_JWT_SECRET={"keys":[{"kty":"EC","crv":"P-256",...}]}
 TURNSTILE_SECRET_KEY=0x4AAAAAA...
+GATEWAY_SECRET=my_super_secret_gateway_key_99
 ```
 
 You must also have your KV databases bound in `wrangler.jsonc`:
