@@ -23,12 +23,12 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use('*', secureHeaders({
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
-    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net", "https://challenges.cloudflare.com"],
+    scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net", "https://challenges.cloudflare.com", "https://checkout.razorpay.com", "https://static.cloudflareinsights.com"],
     styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
     imgSrc: ["'self'", "data:", "https://raw.githubusercontent.com", "https://zuup.dev"],
     connectSrc: ["'self'", "https://auth.zuup.dev", "https://*.supabase.co", "https://challenges.cloudflare.com"],
-    frameSrc: ["'self'", "https://challenges.cloudflare.com"],
+    frameSrc: ["'self'", "https://challenges.cloudflare.com", "https://api.razorpay.com"],
   }
 }));
 app.use('/*', cors({
@@ -981,7 +981,7 @@ app.post('/api/payments/create-session', async (c) => {
     return c.json({ error: 'Unauthorized: Invalid Gateway Secret' }, 401);
   }
   
-  const body = await c.req.json();
+  const body = await c.req.json() as any;
   const { amount, currency = "INR", notes = {}, receipt, redirect_url, site_name = "Zuup" } = body;
   
   if (!amount || !redirect_url) return c.json({ error: 'Amount and redirect_url are required' }, 400);
@@ -1006,10 +1006,10 @@ app.post('/api/payments/create-session', async (c) => {
   
   if (!response.ok) {
     const err = await response.json();
-    return c.json({ error: err }, response.status);
+    return c.json({ error: err }, response.status as any);
   }
   
-  const order = await response.json();
+  const order = await response.json() as any;
   const sessionId = crypto.randomUUID();
   
   await c.env.ZUUP_OAUTH.put(`paysession_${sessionId}`, JSON.stringify({
@@ -1048,25 +1048,44 @@ app.get('/pay', async (c) => {
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        bg: '#16171D',
+                        card: '#1C1D26',
+                        input: '#232530',
+                        border: '#2C2E3A',
+                        primary: '#F04F67',
+                        primaryHover: '#D63D5C',
+                        text: '#FFFFFF',
+                        muted: '#8F91A3',
+                    }
+                }
+            }
+        }
+    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0d0d0d; color: white; }
+        body { font-family: 'Inter', sans-serif; background-color: #16171D; color: white; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col items-center justify-center p-4">
-    <div class="bg-[#1a1a1a] p-8 rounded-2xl shadow-2xl max-w-md w-full text-center border border-gray-800">
-        <h1 class="text-2xl font-bold mb-2">${session.site_name}</h1>
-        <p class="text-gray-400 mb-6">Complete your secure payment below</p>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 bg-bg text-text">
+    <div class="bg-card p-8 rounded-2xl shadow-2xl max-w-md w-full text-center border border-border">
+        <h1 class="text-2xl font-bold mb-2 text-text">${session.site_name}</h1>
+        <p class="text-muted mb-6">Complete your secure payment below</p>
         
-        <div class="bg-black/50 p-6 rounded-xl mb-8">
-            <p class="text-sm text-gray-500 uppercase tracking-wider mb-1">Total Due</p>
-            <p class="text-4xl font-black tabular-nums">₹${(session.amount / 100).toLocaleString()}</p>
+        <div class="bg-input p-6 rounded-xl mb-8 border border-border">
+            <p class="text-sm text-muted uppercase tracking-wider mb-1">Total Due</p>
+            <p class="text-4xl font-black tabular-nums text-text">₹${(session.amount / 100).toLocaleString()}</p>
         </div>
         
-        <button id="pay-btn" class="w-full bg-white text-black font-bold py-4 rounded-xl hover:bg-gray-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.1)] text-lg">
+        <button id="pay-btn" class="w-full bg-primary text-white font-bold py-4 rounded-xl hover:bg-primaryHover transition-colors shadow-[0_0_20px_rgba(240,79,103,0.2)] text-lg">
             Proceed to Payment
         </button>
         
-        <p class="mt-6 text-xs text-gray-600 flex items-center justify-center gap-2">
+        <p class="mt-6 text-xs text-muted flex items-center justify-center gap-2">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
             Secured by Zuup Auth & Razorpay
         </p>
@@ -1075,7 +1094,7 @@ app.get('/pay', async (c) => {
     <script>
         document.getElementById('pay-btn').onclick = function(e){
             e.preventDefault();
-            const rzp = new Razorpay({
+            const rzp = new window.Razorpay({
                 key: "${c.env.RAZORPAY_KEY_ID}",
                 amount: ${session.amount},
                 currency: "INR",
@@ -1110,16 +1129,24 @@ app.get('/pay', async (c) => {
                         alert("Network error verifying payment.");
                     }
                 },
-                theme: { color: "#ffffff" }
+                theme: { color: "#F04F67" },
+                modal: {
+                    ondismiss: function() {
+                        const url = new URL("${session.redirect_url}");
+                        url.searchParams.set("payment_session", "${sessionId}");
+                        url.searchParams.set("status", "cancelled");
+                        window.location.href = url.toString();
+                    }
+                }
             });
             rzp.on('payment.failed', function (response){
-                alert("Payment Failed: " + response.error.description);
+                const url = new URL("${session.redirect_url}");
+                url.searchParams.set("payment_session", "${sessionId}");
+                url.searchParams.set("status", "failed");
+                window.location.href = url.toString();
             });
             rzp.open();
         };
-        
-        // Auto-open if desired
-        // setTimeout(() => document.getElementById('pay-btn').click(), 500);
     </script>
 </body>
 </html>
