@@ -975,16 +975,16 @@ app.post('/api/oauth/token', async (c) => {
 // CENTRALIZED PAYMENT GATEWAY (RAZORPAY)
 // ==========================================
 
-app.post('/api/payments/create-order', async (c) => {
+app.post('/api/payments/create-session', async (c) => {
   const apikey = c.req.header('apikey');
   if (!c.env.GATEWAY_SECRET || apikey !== c.env.GATEWAY_SECRET) {
     return c.json({ error: 'Unauthorized: Invalid Gateway Secret' }, 401);
   }
   
   const body = await c.req.json();
-  const { amount, currency = "INR", notes = {}, receipt } = body;
+  const { amount, currency = "INR", notes = {}, receipt, redirect_url, site_name = "Zuup" } = body;
   
-  if (!amount) return c.json({ error: 'Amount is required' }, 400);
+  if (!amount || !redirect_url) return c.json({ error: 'Amount and redirect_url are required' }, 400);
   if (!c.env.RAZORPAY_KEY_ID || !c.env.RAZORPAY_KEY_SECRET) {
     return c.json({ error: 'Razorpay keys not configured on gateway' }, 500);
   }
@@ -1010,7 +1010,120 @@ app.post('/api/payments/create-order', async (c) => {
   }
   
   const order = await response.json();
-  return c.json({ orderId: order.id, amount: order.amount, keyId: c.env.RAZORPAY_KEY_ID });
+  const sessionId = crypto.randomUUID();
+  
+  await c.env.ZUUP_OAUTH.put(`paysession_${sessionId}`, JSON.stringify({
+    orderId: order.id,
+    amount: order.amount,
+    status: 'pending',
+    redirect_url,
+    site_name,
+    notes
+  }), { expirationTtl: 3600 }); // 1 hour expiry
+  
+  const sessionUrl = `${new URL(c.req.url).origin}/pay?session=${sessionId}`;
+  return c.json({ sessionId, sessionUrl, orderId: order.id });
+});
+
+app.get('/pay', async (c) => {
+  const sessionId = c.req.query('session');
+  if (!sessionId) return c.html('<h1>Invalid Session</h1>', 400);
+  
+  const sessionDataStr = await c.env.ZUUP_OAUTH.get(`paysession_${sessionId}`);
+  if (!sessionDataStr) return c.html('<h1>Session Expired or Not Found</h1>', 404);
+  
+  const session = JSON.parse(sessionDataStr);
+  if (session.status === 'paid') {
+    return c.html(`<h1>Payment already completed.</h1><p><a href="${session.redirect_url}?payment_session=${sessionId}">Click here to return</a></p>`);
+  }
+  
+  // Render Payment Portal HTML
+  return c.html(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${session.site_name} | Secure Checkout</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0d0d0d; color: white; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="bg-[#1a1a1a] p-8 rounded-2xl shadow-2xl max-w-md w-full text-center border border-gray-800">
+        <h1 class="text-2xl font-bold mb-2">${session.site_name}</h1>
+        <p class="text-gray-400 mb-6">Complete your secure payment below</p>
+        
+        <div class="bg-black/50 p-6 rounded-xl mb-8">
+            <p class="text-sm text-gray-500 uppercase tracking-wider mb-1">Total Due</p>
+            <p class="text-4xl font-black tabular-nums">₹${(session.amount / 100).toLocaleString()}</p>
+        </div>
+        
+        <button id="pay-btn" class="w-full bg-white text-black font-bold py-4 rounded-xl hover:bg-gray-200 transition-colors shadow-[0_0_20px_rgba(255,255,255,0.1)] text-lg">
+            Proceed to Payment
+        </button>
+        
+        <p class="mt-6 text-xs text-gray-600 flex items-center justify-center gap-2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            Secured by Zuup Auth & Razorpay
+        </p>
+    </div>
+    
+    <script>
+        document.getElementById('pay-btn').onclick = function(e){
+            e.preventDefault();
+            const rzp = new Razorpay({
+                key: "${c.env.RAZORPAY_KEY_ID}",
+                amount: ${session.amount},
+                currency: "INR",
+                name: "${session.site_name}",
+                description: "Secure Checkout",
+                order_id: "${session.orderId}",
+                handler: async function (response) {
+                    document.getElementById('pay-btn').innerText = "Verifying...";
+                    document.getElementById('pay-btn').disabled = true;
+                    
+                    try {
+                        const verifyReq = await fetch('/api/payments/verify-session', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                session_id: "${sessionId}",
+                                razorpay_order_id: response.razorpay_order_id,
+                                razorpay_payment_id: response.razorpay_payment_id,
+                                razorpay_signature: response.razorpay_signature
+                            })
+                        });
+                        
+                        const verifyData = await verifyReq.json();
+                        if (verifyData.success) {
+                            window.location.href = verifyData.redirect_url;
+                        } else {
+                            alert("Payment verification failed: " + (verifyData.error || "Unknown"));
+                            document.getElementById('pay-btn').innerText = "Proceed to Payment";
+                            document.getElementById('pay-btn').disabled = false;
+                        }
+                    } catch(err) {
+                        alert("Network error verifying payment.");
+                    }
+                },
+                theme: { color: "#ffffff" }
+            });
+            rzp.on('payment.failed', function (response){
+                alert("Payment Failed: " + response.error.description);
+            });
+            rzp.open();
+        };
+        
+        // Auto-open if desired
+        // setTimeout(() => document.getElementById('pay-btn').click(), 500);
+    </script>
+</body>
+</html>
+  `);
 });
 
 // HMAC verification Helper using Web Crypto
@@ -1030,17 +1143,16 @@ async function verifyRazorpaySignature(orderId: string, paymentId: string, signa
   return crypto.subtle.verify('HMAC', key, signatureBytes, data);
 }
 
-app.post('/api/payments/verify', async (c) => {
-  const apikey = c.req.header('apikey');
-  if (!c.env.GATEWAY_SECRET || apikey !== c.env.GATEWAY_SECRET) {
-    return c.json({ error: 'Unauthorized: Invalid Gateway Secret' }, 401);
-  }
-
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = await c.req.json();
+app.post('/api/payments/verify-session', async (c) => {
+  const { session_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = await c.req.json();
   
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+  if (!session_id || !razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
     return c.json({ error: 'Missing payment signature details' }, 400);
   }
+  
+  const sessionDataStr = await c.env.ZUUP_OAUTH.get(`paysession_${session_id}`);
+  if (!sessionDataStr) return c.json({ error: 'Session expired or not found' }, 404);
+  const session = JSON.parse(sessionDataStr);
 
   const isValid = await verifyRazorpaySignature(
     razorpay_order_id,
@@ -1052,8 +1164,31 @@ app.post('/api/payments/verify', async (c) => {
   if (!isValid) {
     return c.json({ error: 'Invalid payment signature' }, 400);
   }
+  
+  // Mark as paid
+  session.status = 'paid';
+  session.razorpay_payment_id = razorpay_payment_id;
+  await c.env.ZUUP_OAUTH.put(`paysession_${session_id}`, JSON.stringify(session), { expirationTtl: 3600 * 24 * 7 }); // Keep for 7 days
+  
+  const redirectParams = new URLSearchParams({ payment_session: session_id, status: 'success' });
+  const finalRedirectUrl = session.redirect_url.includes('?') 
+    ? `${session.redirect_url}&${redirectParams}` 
+    : `${session.redirect_url}?${redirectParams}`;
 
-  return c.json({ success: true, message: 'Payment verified successfully' });
+  return c.json({ success: true, redirect_url: finalRedirectUrl });
+});
+
+app.get('/api/payments/session/:id', async (c) => {
+  const apikey = c.req.header('apikey');
+  if (!c.env.GATEWAY_SECRET || apikey !== c.env.GATEWAY_SECRET) {
+    return c.json({ error: 'Unauthorized: Invalid Gateway Secret' }, 401);
+  }
+  
+  const sessionId = c.req.param('id');
+  const sessionDataStr = await c.env.ZUUP_OAUTH.get(`paysession_${sessionId}`);
+  if (!sessionDataStr) return c.json({ error: 'Session not found' }, 404);
+  
+  return c.json(JSON.parse(sessionDataStr));
 });
 
 // ==========================================

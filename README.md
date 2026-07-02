@@ -116,17 +116,17 @@ No more leaked anon keys, and 0% chance of direct database access even if your f
 
 ---
 
-## 💳 Centralized Secure Payment Gateway (Razorpay)
+## 💳 Unified Visual Payment Portal (Razorpay)
 
-Zuup Auth acts as a highly secure, centralized payment processor for all your sites. By moving your Razorpay keys entirely into the worker, we prevent front-end tampering and completely secure the payment flow. 
+Zuup Auth acts as a highly secure, unified payment processor (similar to Stripe Checkout) for all your sites. By moving your Razorpay keys entirely into the worker, we prevent front-end tampering and completely secure the payment flow. 
 
-When a user initiates a checkout on your frontend, your site's server calculates the correct amount from the database, then securely requests an order from Zuup Auth using your `GATEWAY_SECRET`. The browser cannot modify the amount!
+When a user initiates a checkout on your frontend, your site's server creates a **Payment Session**, and the user is redirected to `auth.zuup.dev` to securely complete the transaction on a beautiful UI.
 
-**Step 1: Create an Order**
-From your backend/SSR framework, call Zuup Auth to generate an order:
+**Step 1: Create a Checkout Session**
+From your backend/SSR framework, call Zuup Auth to generate a session:
 
 ```javascript
-const response = await fetch("https://auth.zuup.dev/api/payments/create-order", {
+const response = await fetch("https://auth.zuup.dev/api/payments/create-session", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -135,33 +135,37 @@ const response = await fetch("https://auth.zuup.dev/api/payments/create-order", 
   body: JSON.stringify({
     amount: 1500, // Amount in Rupees (Worker converts to paise automatically)
     currency: "INR",
-    notes: { email: "user@example.com", item: "Ticket" }
+    site_name: "My Awesome App", // Shown on the payment portal
+    redirect_url: "https://myapp.com/results", // Where to send user after payment
+    notes: { email: "user@example.com", item: "Ticket" } // Securely stored in KV
   })
 });
-const { orderId, amount, keyId } = await response.json();
-```
-*Pass this `orderId` and `keyId` to your frontend's Razorpay checkout script.*
+const { sessionUrl } = await response.json();
 
-**Step 2: Verify the Payment Signature**
-Once the user pays, Razorpay returns a signature. Do NOT verify this on the client. Send it to your backend, which forwards it to Zuup Auth for cryptographic verification:
+// Redirect the user's browser to the sessionUrl!
+// window.location.href = sessionUrl;
+```
+
+**Step 2: Handle the Return Redirect**
+Once the user pays on the Zuup Auth portal, they will be redirected back to your `redirect_url` with two query parameters:
+`?payment_session=xxx&status=success`
+
+**Step 3: Securely Verify the Session (Backend)**
+Before delivering the product or updating your database, your backend must ask Zuup Auth if that session was actually paid:
 
 ```javascript
-const verifyRes = await fetch("https://auth.zuup.dev/api/payments/verify", {
-  method: "POST",
+const verifyRes = await fetch("https://auth.zuup.dev/api/payments/session/xxx", {
+  method: "GET",
   headers: {
-    "Content-Type": "application/json",
     "apikey": process.env.GATEWAY_SECRET
-  },
-  body: JSON.stringify({
-    razorpay_order_id: "order_XYZ",
-    razorpay_payment_id: "pay_XYZ",
-    razorpay_signature: "a1b2c3d4..."
-  })
+  }
 });
 
-const { success } = await verifyRes.json();
-if (success) {
-  // Payment is 100% verified and secure. Proceed with database updates.
+const session = await verifyRes.json();
+if (session.status === "paid") {
+  // Payment is 100% verified and secure. 
+  // You can access your original notes here: session.notes.email
+  // Proceed with database updates!
 }
 ```
 
