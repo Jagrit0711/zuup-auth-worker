@@ -7,6 +7,8 @@ import { jwtVerify, importJWK } from 'jose';
 
 type Bindings = {
   SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+  GATEWAY_SECRET: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_JWT_SECRET: string;
   TURNSTILE_SECRET_KEY: string;
@@ -998,6 +1000,21 @@ app.all('/*', async (c) => {
   headers.delete('Host');
   headers.delete('X-Forwarded-Host');
   
+  // GATEWAY SECRET VALIDATION
+  // The frontend passes the Gateway Secret in the 'apikey' header (or URL param) 
+  // instead of the real Supabase anon key.
+  const incomingApiKeyHeader = headers.get('apikey');
+  const incomingApiKeyUrl = targetUrl.searchParams.get('apikey');
+  const providedSecret = incomingApiKeyHeader || incomingApiKeyUrl;
+
+  if (!c.env.GATEWAY_SECRET) {
+    return c.json({ error: 'Server configuration error: GATEWAY_SECRET is missing.' }, 500);
+  }
+
+  if (!providedSecret || providedSecret !== c.env.GATEWAY_SECRET) {
+    return c.json({ error: 'Unauthorized: Invalid or missing Gateway Secret' }, 401);
+  }
+
   // Always inject the correct apikey from the worker's secrets
   if (c.env.SUPABASE_ANON_KEY) {
     headers.set('apikey', c.env.SUPABASE_ANON_KEY);
