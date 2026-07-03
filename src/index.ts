@@ -21,6 +21,7 @@ type Bindings = {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('*', secureHeaders({
+  crossOriginOpenerPolicy: false,
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net", "https://challenges.cloudflare.com", "https://checkout.razorpay.com", "https://static.cloudflareinsights.com"],
@@ -310,7 +311,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                             } else {
                                 // Append token to URL
                                 const url = new URL(this.redirectTo);
-                                url.searchParams.set('token', data.token);
+                                url.hash = "access_token=" + data.token + "&refresh_token=" + (data.session?.refresh_token || "") + "&expires_in=" + (data.session?.expires_in || 3600) + "&token_type=bearer";
                                 window.location.href = url.toString();
                             }
                         }
@@ -541,10 +542,10 @@ app.get('/login', async (c) => {
         return c.redirect(responseData.redirect_to);
       } else if (redirectTo) {
         const url = new URL(redirectTo);
-        url.searchParams.set('token', responseData.token || token);
+        url.hash = `access_token=${responseData.token || token}&token_type=bearer`;
         return c.redirect(url.toString());
       } else {
-        return c.redirect(`https://zuup.dev/dashboard?token=${responseData.token || token}`);
+        return c.redirect(`https://zuup.dev/dashboard#access_token=${responseData.token || token}&refresh_token=${responseData.session?.refresh_token || ""}&expires_in=${responseData.session?.expires_in || 3600}&token_type=bearer`);
       }
     } catch (err: any) {
       // Invalid or expired token, just ignore and render login UI
@@ -687,7 +688,7 @@ const verifyTurnstile = async (c: any, token: string) => {
   formData.append('remoteip', c.req.header('cf-connecting-ip') || '');
   const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', { body: formData, method: 'POST' });
   const outcome = await result.json();
-  return outcome.success;
+  return (outcome as any).success;
 };
 
 const checkRateLimit = async (c: any) => {
@@ -730,7 +731,7 @@ const handleSSORedirect = async (c: any, client_id: string, redirect_uri: string
       }
     }
   }
-  return { token: data.session.access_token };
+  return { token: data?.session?.access_token, session: data?.session };
 };
 
 app.post('/api/login', async (c) => {
@@ -745,7 +746,7 @@ app.post('/api/login', async (c) => {
   const supabaseAdmin = initSupabase(c);
   const { data, error } = await supabaseAdmin.auth.signInWithPassword({ email, password });
   if (error) return c.json({ error: error.message }, 400);
-  await setSSOCookie(c, data.session.access_token);
+  if(data.session) await setSSOCookie(c, data.session.access_token);
   await resetRateLimit(c);
   
   const responseData = await handleSSORedirect(c, client_id, redirect_uri, data);
@@ -804,7 +805,7 @@ app.post('/api/otp/verify', async (c) => {
   const supabaseAdmin = initSupabase(c);
   const { data, error } = await supabaseAdmin.auth.verifyOtp({ email, token, type: 'email' });
   if (error) return c.json({ error: error.message }, 400);
-  await setSSOCookie(c, data.session.access_token);
+  if(data.session) await setSSOCookie(c, data.session.access_token);
   await resetRateLimit(c);
   
   const responseData = await handleSSORedirect(c, client_id, redirect_uri, data);
@@ -981,7 +982,7 @@ app.post('/api/payments/create-session', async (c) => {
   }
   
   const body = await c.req.json() as any;
-  const { amount, currency = "INR", notes = {}, receipt, redirect_url, site_name = "Zuup" } = body;
+  const { amount, currency = "INR", notes = {}, receipt, redirect_url, site_name = "Zuup", webhook_path, webhook_body } = body;
   
   if (!amount || !redirect_url) return c.json({ error: 'Amount and redirect_url are required' }, 400);
   if (!c.env.RAZORPAY_KEY_ID || !c.env.RAZORPAY_KEY_SECRET) {
@@ -1017,7 +1018,9 @@ app.post('/api/payments/create-session', async (c) => {
     status: 'pending',
     redirect_url,
     site_name,
-    notes
+    notes,
+    webhook_path,
+    webhook_body
   }), { expirationTtl: 3600 }); // 1 hour expiry
   
   const sessionUrl = `${new URL(c.req.url).origin}/pay?session=${sessionId}`;
@@ -1045,7 +1048,7 @@ app.get('/pay', async (c) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>${session.site_name} | Secure Checkout</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <script>
         tailwind.config = {
@@ -1061,6 +1064,7 @@ app.get('/pay', async (c) => {
                         primaryHover: '#D63D5C',
                         text: '#FFFFFF',
                         muted: '#8F91A3',
+                        success: '#10B981',
                     }
                 }
             }
@@ -1071,39 +1075,76 @@ app.get('/pay', async (c) => {
     </style>
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4 bg-bg text-text">
-    <div class="bg-card p-8 rounded-2xl shadow-2xl max-w-md w-full text-center border border-border">
-        <h1 class="text-2xl font-bold mb-2 text-text">${session.site_name}</h1>
-        <p class="text-muted mb-6">Complete your secure payment below</p>
+    
+    <!-- Top Left Logo -->
+    <div class="absolute top-6 left-6 flex items-center gap-2">
+        <img src="https://zuup.dev/zuupw.png" width="24" height="24" alt="Zuup Auth" />
+        <span class="font-bold text-lg tracking-tight">zuup <span class="text-primary">auth</span></span>
+    </div>
+
+    <div class="bg-card p-8 sm:p-10 rounded-3xl shadow-2xl max-w-lg w-full text-center border border-border mt-12 relative overflow-hidden">
         
-        <div class="bg-input p-6 rounded-xl mb-8 border border-border">
-            <p class="text-sm text-muted uppercase tracking-wider mb-1">Total Due</p>
-            <p class="text-4xl font-black tabular-nums text-text">₹${(session.amount / 100).toLocaleString()}</p>
+        <!-- Subtle gradient glow -->
+        <div class="absolute -top-24 -right-24 w-48 h-48 bg-primary/20 rounded-full blur-[60px] pointer-events-none"></div>
+        <div class="absolute -bottom-24 -left-24 w-48 h-48 bg-primary/10 rounded-full blur-[60px] pointer-events-none"></div>
+        
+        <h1 class="text-xl sm:text-2xl font-semibold mb-2 text-text">
+            <span class="text-primary font-bold">${session.site_name}</span> is requesting a payment. Please review it below.
+        </h1>
+        
+        <p id="security-badge" class="text-xs sm:text-sm font-medium px-3 py-1 bg-success/10 text-success rounded-full inline-flex items-center gap-1.5 mb-8 hidden">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            This is a secure Zuup verified site.
+        </p>
+
+        <div class="py-6 mb-6 relative">
+            <p class="text-5xl sm:text-6xl font-black tabular-nums tracking-tight text-white flex items-center justify-center gap-1">
+                <span class="text-muted text-4xl">₹</span> ${(session.amount / 100).toLocaleString()}
+            </p>
+            <p class="mt-4 text-sm text-muted">
+                Payment for <span class="text-white font-medium">(given by ${session.site_name})</span>
+            </p>
         </div>
         
-        <button id="pay-btn" class="w-full bg-primary text-white font-bold py-4 rounded-xl hover:bg-primaryHover transition-colors shadow-[0_0_20px_rgba(240,79,103,0.2)] text-lg">
-            Proceed to Payment
+        <button id="pay-btn" class="w-full bg-primary text-white font-bold py-4 rounded-xl hover:bg-primaryHover transition-all hover:scale-[1.02] shadow-[0_0_20px_rgba(240,79,103,0.3)] text-lg flex items-center justify-center gap-2 mb-4">
+            Pay Now <span class="font-normal opacity-80 text-sm ml-1">(secured by Razorpay)</span>
         </button>
         
-        <p class="mt-6 text-xs text-muted flex items-center justify-center gap-2">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-            Secured by Zuup Auth & Razorpay
-        </p>
+        <button id="cancel-btn" class="text-muted hover:text-white transition-colors text-sm font-medium py-2 px-4 rounded-lg hover:bg-white/5">
+            Cancel payment
+        </button>
     </div>
     
     <script>
-        const handleRedirect = (urlStr) => {
+        // Check if the requesting domain is a zuup subdomain
+        const redirectUrl = new URL("${session.redirect_url}");
+        if (redirectUrl.hostname.endsWith('zuup.dev')) {
+            document.getElementById('security-badge').classList.remove('hidden');
+        }
+
+        const handleRedirect = (urlStr, statusMsg) => {
             try {
                 if (window.opener && !window.opener.closed) {
-                    window.opener.location.href = urlStr;
+                    window.opener.postMessage({ type: 'ZUUP_PAYMENT', status: statusMsg, url: urlStr }, redirectUrl.origin);
                     window.close();
                     return;
                 }
             } catch(e) {}
+            // Only redirect if we are not in a popup
             window.location.href = urlStr;
         };
 
+        document.getElementById('cancel-btn').onclick = function(e) {
+            e.preventDefault();
+            const url = new URL("${session.redirect_url}");
+            url.searchParams.set("payment_session", "${sessionId}");
+            url.searchParams.set("status", "cancelled");
+            handleRedirect(url.toString(), 'cancelled');
+        };
+
         document.getElementById('pay-btn').onclick = function(e){
-            if(e) e.preventDefault();
+            e.preventDefault();
+            
             const rzp = new window.Razorpay({
                 key: "${c.env.RAZORPAY_KEY_ID}",
                 amount: ${session.amount},
@@ -1112,7 +1153,7 @@ app.get('/pay', async (c) => {
                 description: "Secure Checkout",
                 order_id: "${session.orderId}",
                 handler: async function (response) {
-                    document.getElementById('pay-btn').innerText = "Verifying...";
+                    document.getElementById('pay-btn').innerHTML = '<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Verifying...';
                     document.getElementById('pay-btn').disabled = true;
                     
                     try {
@@ -1129,15 +1170,15 @@ app.get('/pay', async (c) => {
                         
                         const verifyData = await verifyReq.json();
                         if (verifyData.success) {
-                            handleRedirect(verifyData.redirect_url);
+                            handleRedirect(verifyData.redirect_url, 'success');
                         } else {
-                            alert("Payment verification failed: " + (verifyData.error || "Unknown"));
-                            document.getElementById('pay-btn').innerText = "Proceed to Payment";
+                            alert(verifyData.error || 'Verification failed');
+                            document.getElementById('pay-btn').innerHTML = 'Pay Now <span class="font-normal opacity-80 text-sm ml-1">(secured by Razorpay)</span>';
                             document.getElementById('pay-btn').disabled = false;
                         }
                     } catch(err) {
-                        alert("Network error verifying payment.");
-                        document.getElementById('pay-btn').innerText = "Proceed to Payment";
+                        alert('Error verifying payment.');
+                        document.getElementById('pay-btn').innerHTML = 'Pay Now <span class="font-normal opacity-80 text-sm ml-1">(secured by Razorpay)</span>';
                         document.getElementById('pay-btn').disabled = false;
                     }
                 },
@@ -1147,7 +1188,7 @@ app.get('/pay', async (c) => {
                         const url = new URL("${session.redirect_url}");
                         url.searchParams.set("payment_session", "${sessionId}");
                         url.searchParams.set("status", "cancelled");
-                        handleRedirect(url.toString());
+                        handleRedirect(url.toString(), 'cancelled');
                     }
                 }
             });
@@ -1155,13 +1196,10 @@ app.get('/pay', async (c) => {
                 const url = new URL("${session.redirect_url}");
                 url.searchParams.set("payment_session", "${sessionId}");
                 url.searchParams.set("status", "failed");
-                handleRedirect(url.toString());
+                handleRedirect(url.toString(), 'failed');
             });
             rzp.open();
         };
-
-        // Auto-open Razorpay when the popup loads
-        setTimeout(() => document.getElementById('pay-btn').click(), 200);
     </script>
 </body>
 </html>
@@ -1184,6 +1222,78 @@ async function verifyRazorpaySignature(orderId: string, paymentId: string, signa
   
   return crypto.subtle.verify('HMAC', key, signatureBytes, data);
 }
+
+app.post('/api/payments/verify-redirect', async (c) => {
+  const body = await c.req.parseBody();
+  const session_id = c.req.query('session_id');
+  const razorpay_order_id = body.razorpay_order_id as string;
+  const razorpay_payment_id = body.razorpay_payment_id as string;
+  const razorpay_signature = body.razorpay_signature as string;
+  const error_code = body.error && (body.error as any).code;
+  
+  if (!session_id) return c.html('<h1>Invalid Session ID</h1>', 400);
+  
+  const sessionDataStr = await c.env.ZUUP_OAUTH.get(`paysession_${session_id}`);
+  if (!sessionDataStr) return c.html('<h1>Session expired or not found</h1>', 404);
+  const session = JSON.parse(sessionDataStr);
+
+  const redirectParams = new URLSearchParams({ payment_session: session_id });
+  let status = 'failed';
+
+  if (!error_code && razorpay_signature) {
+    const isValid = await verifyRazorpaySignature(
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      c.env.RAZORPAY_KEY_SECRET
+    );
+
+    if (isValid) {
+      status = 'success';
+      session.status = 'paid';
+      session.razorpay_payment_id = razorpay_payment_id;
+      
+      // FIRE WEBHOOK if configured
+      if (session.webhook_path && c.env.SUPABASE_URL && c.env.SUPABASE_SERVICE_ROLE_KEY) {
+        try {
+          const webhookUrl = new URL(session.webhook_path, c.env.SUPABASE_URL).toString();
+          await fetch(webhookUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${c.env.SUPABASE_SERVICE_ROLE_KEY}`,
+              'apikey': c.env.SUPABASE_SERVICE_ROLE_KEY
+            },
+            body: JSON.stringify(session.webhook_body || {})
+          });
+        } catch(e) {
+          console.error("Webhook failed:", e);
+        }
+      }
+
+      await c.env.ZUUP_OAUTH.put(`paysession_${session_id}`, JSON.stringify(session), { expirationTtl: 3600 * 24 * 7 });
+    }
+  }
+
+  redirectParams.set('status', status);
+  const finalRedirectUrl = session.redirect_url.includes('?') 
+    ? `${session.redirect_url}&${redirectParams}` 
+    : `${session.redirect_url}?${redirectParams}`;
+
+  return c.html(`
+    <script>
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage({ type: 'ZUUP_PAYMENT', status: '${status}', url: "${finalRedirectUrl}" }, new URL("${session.redirect_url}").origin);
+          window.close();
+        }
+      } catch(e) {}
+      // If we are not in a popup, redirect the main window
+      window.location.href = "${finalRedirectUrl}";
+    </script>
+    <p>Processing payment... please wait.</p>
+  `);
+});
 
 app.post('/api/payments/verify-session', async (c) => {
   const { session_id, razorpay_order_id, razorpay_payment_id, razorpay_signature } = await c.req.json();
@@ -1210,6 +1320,25 @@ app.post('/api/payments/verify-session', async (c) => {
   // Mark as paid
   session.status = 'paid';
   session.razorpay_payment_id = razorpay_payment_id;
+  
+  // FIRE WEBHOOK if configured
+  if (session.webhook_path && c.env.SUPABASE_URL && c.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const webhookUrl = new URL(session.webhook_path, c.env.SUPABASE_URL).toString();
+      await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${c.env.SUPABASE_SERVICE_ROLE_KEY}`,
+          'apikey': c.env.SUPABASE_SERVICE_ROLE_KEY
+        },
+        body: JSON.stringify(session.webhook_body || {})
+      });
+    } catch(e) {
+      console.error("Webhook failed:", e);
+    }
+  }
+
   await c.env.ZUUP_OAUTH.put(`paysession_${session_id}`, JSON.stringify(session), { expirationTtl: 3600 * 24 * 7 }); // Keep for 7 days
   
   const redirectParams = new URLSearchParams({ payment_session: session_id, status: 'success' });

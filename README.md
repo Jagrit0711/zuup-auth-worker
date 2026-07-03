@@ -151,25 +151,47 @@ const { sessionUrl, sessionId } = await response.json();
 // 2. Begin server-side polling using the sessionId!
 ```
 
-**Step 2: Server-Side Polling (Client Integration)**
-Instead of relying on fragile cross-origin `postMessage` calls from the popup, the best practice is to poll the worker for the session's status from your frontend:
+**Step 2: Client Integration (Popup & Polling)**
+Instead of relying on fragile cross-origin callbacks, the best practice is to open the URL in a new popup window, and then have your frontend poll the worker for the session's status. The popup acts as a bridge showing the secure Zuup Auth UI.
 
 ```javascript
+// 1. Open the payment portal in a popup
+const popup = window.open(sessionUrl, 'ZuupPayment', 'width=500,height=700');
+
+// 2. Start polling for payment status
 const pollInterval = setInterval(async () => {
-  // Your frontend backend queries the worker securely:
-  const res = await fetch(\`https://auth.zuup.dev/api/payments/session/\${sessionId}\`, {
-    headers: { "apikey": process.env.GATEWAY_SECRET }
+  const res = await fetch(`https://auth.zuup.dev/api/payments/session/${sessionId}`, {
+    headers: { "apikey": process.env.GATEWAY_SECRET } // If querying from backend, else use a proxy
   });
   
   const sessionData = await res.json();
+  
   if (sessionData.status === 'paid') {
     clearInterval(pollInterval);
-    // Success! The generic webhook was already fired by Zuup Auth, 
-    // so your database is updated. Just refresh your UI.
+    popup.close(); // Close the popup window
+    alert('Payment Successful!');
     refreshData();
+  } 
+  
+  // If the user clicks "Cancel Payment" inside the popup, or closes the window:
+  else if (popup.closed) {
+    clearInterval(pollInterval);
+    // Do one final check just in case payment succeeded right before they closed it
+    const finalCheck = await fetch(`https://auth.zuup.dev/api/payments/session/${sessionId}`, {
+        headers: { "apikey": process.env.GATEWAY_SECRET }
+    }).then(r => r.json());
+    if (finalCheck.status !== 'paid') {
+       alert('Payment was cancelled or failed.');
+    }
   }
-}, 3000);
+}, 2000);
 ```
+
+**How the Popup Lifecycle Works:**
+1. **Initial UI:** `example.com` opens the popup. Zuup Auth displays a beautiful review screen (`example.com is requesting payment for ₹X`). 
+2. **Payment:** The user clicks "Pay Now". Razorpay opens securely on top.
+3. **Success:** Razorpay completes. Zuup Auth verifies the signature server-side and updates the session to `paid`. The popup safely closes itself or is closed by your polling loop.
+4. **Cancellation:** If the user clicks "Cancel Payment" on the UI, Zuup Auth securely closes the popup window. Your polling loop detects `popup.closed` and registers it as cancelled.
 
 **Step 3: The Generic Webhook Execution**
 When Razorpay confirms the payment, Zuup Auth internally executes:
