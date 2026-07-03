@@ -33,8 +33,7 @@ app.use('*', secureHeaders({
 }));
 app.use('/*', cors({
   origin: (origin) => {
-    if (origin && (origin.endsWith('.zuup.dev') || origin === 'https://zuup.dev')) return origin;
-    return 'http://localhost:5173';
+    return origin || '*'; // Allow all origins to prevent CORS errors during integration
   },
   credentials: true,
   allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'Prefer', 'Content-Profile', 'Accept-Profile', 'x-supabase-api-version'],
@@ -545,7 +544,7 @@ app.get('/login', async (c) => {
         url.searchParams.set('token', responseData.token || token);
         return c.redirect(url.toString());
       } else {
-        return c.redirect('https://zuup.dev/dashboard');
+        return c.redirect(`https://zuup.dev/dashboard?token=${responseData.token || token}`);
       }
     } catch (err: any) {
       // Invalid or expired token, just ignore and render login UI
@@ -1092,8 +1091,19 @@ app.get('/pay', async (c) => {
     </div>
     
     <script>
+        const handleRedirect = (urlStr) => {
+            try {
+                if (window.opener && !window.opener.closed) {
+                    window.opener.location.href = urlStr;
+                    window.close();
+                    return;
+                }
+            } catch(e) {}
+            window.location.href = urlStr;
+        };
+
         document.getElementById('pay-btn').onclick = function(e){
-            e.preventDefault();
+            if(e) e.preventDefault();
             const rzp = new window.Razorpay({
                 key: "${c.env.RAZORPAY_KEY_ID}",
                 amount: ${session.amount},
@@ -1119,7 +1129,7 @@ app.get('/pay', async (c) => {
                         
                         const verifyData = await verifyReq.json();
                         if (verifyData.success) {
-                            window.location.href = verifyData.redirect_url;
+                            handleRedirect(verifyData.redirect_url);
                         } else {
                             alert("Payment verification failed: " + (verifyData.error || "Unknown"));
                             document.getElementById('pay-btn').innerText = "Proceed to Payment";
@@ -1127,6 +1137,8 @@ app.get('/pay', async (c) => {
                         }
                     } catch(err) {
                         alert("Network error verifying payment.");
+                        document.getElementById('pay-btn').innerText = "Proceed to Payment";
+                        document.getElementById('pay-btn').disabled = false;
                     }
                 },
                 theme: { color: "#F04F67" },
@@ -1135,7 +1147,7 @@ app.get('/pay', async (c) => {
                         const url = new URL("${session.redirect_url}");
                         url.searchParams.set("payment_session", "${sessionId}");
                         url.searchParams.set("status", "cancelled");
-                        window.location.href = url.toString();
+                        handleRedirect(url.toString());
                     }
                 }
             });
@@ -1143,10 +1155,13 @@ app.get('/pay', async (c) => {
                 const url = new URL("${session.redirect_url}");
                 url.searchParams.set("payment_session", "${sessionId}");
                 url.searchParams.set("status", "failed");
-                window.location.href = url.toString();
+                handleRedirect(url.toString());
             });
             rzp.open();
         };
+
+        // Auto-open Razorpay when the popup loads
+        setTimeout(() => document.getElementById('pay-btn').click(), 200);
     </script>
 </body>
 </html>
@@ -1260,8 +1275,12 @@ app.all('/*', async (c) => {
     return c.json({ error: 'Server configuration error: GATEWAY_SECRET is missing.' }, 500);
   }
 
-  if (!providedSecret || providedSecret !== c.env.GATEWAY_SECRET) {
-    return c.json({ error: 'Unauthorized: Invalid or missing Gateway Secret' }, 401);
+  const isBrowserCallback = targetUrl.pathname.startsWith('/auth/v1/callback') || targetUrl.pathname.startsWith('/auth/v1/authorize') || targetUrl.pathname.startsWith('/auth/v1/verify');
+  
+  if (!isBrowserCallback) {
+    if (!providedSecret || providedSecret !== c.env.GATEWAY_SECRET) {
+      return c.json({ error: 'Unauthorized: Invalid or missing Gateway Secret' }, 401);
+    }
   }
 
   // Always inject the correct apikey from the worker's secrets

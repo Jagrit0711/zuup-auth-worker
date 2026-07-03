@@ -1,4 +1,4 @@
-# Zuup Auth Gateway & SSO Provider 🚀
+# Zuup Auth Gateway & SSO Provider 
 
 Zuup Auth is a high-performance, edge-first authentication proxy built on Cloudflare Workers and Hono. It acts as a blazing-fast centralized login gateway for all your services, acting as a direct proxy to your Supabase backend while providing enterprise-grade security features out of the box.
 
@@ -120,10 +120,10 @@ No more leaked anon keys, and 0% chance of direct database access even if your f
 
 Zuup Auth acts as a highly secure, unified payment processor (similar to Stripe Checkout) for all your sites. By moving your Razorpay keys entirely into the worker, we prevent front-end tampering and completely secure the payment flow. 
 
-When a user initiates a checkout on your frontend, your site's server creates a **Payment Session**, and the user is redirected to `auth.zuup.dev` to securely complete the transaction on a beautiful UI.
+When a user initiates a checkout on your frontend, your site's server creates a **Payment Session**, and the user is redirected to `auth.zuup.dev` to securely complete the transaction on a beautiful UI. Crucially, the worker can **automatically execute a generic Supabase RPC Webhook** upon payment success.
 
 **Step 1: Create a Checkout Session**
-From your backend/SSR framework, call Zuup Auth to generate a session:
+From your backend/SSR framework, call Zuup Auth to generate a session, optionally passing a `webhook_path` and `webhook_body`.
 
 ```javascript
 const response = await fetch("https://auth.zuup.dev/api/payments/create-session", {
@@ -133,41 +133,54 @@ const response = await fetch("https://auth.zuup.dev/api/payments/create-session"
     "apikey": process.env.GATEWAY_SECRET
   },
   body: JSON.stringify({
-    amount: 1500, // Amount in Rupees (Worker converts to paise automatically)
+    amount: 1500, // Amount in Rupees
     currency: "INR",
     site_name: "My Awesome App", // Shown on the payment portal
-    redirect_url: "https://myapp.com/results", // Where to send user after payment
-    notes: { email: "user@example.com", item: "Ticket" } // Securely stored in KV
+    redirect_url: "https://myapp.com/results",
+    notes: { email: "user@example.com" },
+    
+    // THE MAGIC: If payment succeeds, Zuup Auth will securely call this endpoint 
+    // on your Supabase backend using its internal SUPABASE_SERVICE_ROLE_KEY!
+    webhook_path: "/rest/v1/rpc/mark_ticket_paid",
+    webhook_body: { user_email: "user@example.com" }
   })
 });
-const { sessionUrl } = await response.json();
+const { sessionUrl, sessionId } = await response.json();
 
-// Redirect the user's browser to the sessionUrl!
-// window.location.href = sessionUrl;
+// 1. Open the sessionUrl in a popup or redirect the user
+// 2. Begin server-side polling using the sessionId!
 ```
 
-**Step 2: Handle the Return Redirect**
-Once the user pays on the Zuup Auth portal, they will be redirected back to your `redirect_url` with two query parameters:
-`?payment_session=xxx&status=success`
-
-**Step 3: Securely Verify the Session (Backend)**
-Before delivering the product or updating your database, your backend must ask Zuup Auth if that session was actually paid:
+**Step 2: Server-Side Polling (Client Integration)**
+Instead of relying on fragile cross-origin `postMessage` calls from the popup, the best practice is to poll the worker for the session's status from your frontend:
 
 ```javascript
-const verifyRes = await fetch("https://auth.zuup.dev/api/payments/session/xxx", {
-  method: "GET",
-  headers: {
-    "apikey": process.env.GATEWAY_SECRET
+const pollInterval = setInterval(async () => {
+  // Your frontend backend queries the worker securely:
+  const res = await fetch(\`https://auth.zuup.dev/api/payments/session/\${sessionId}\`, {
+    headers: { "apikey": process.env.GATEWAY_SECRET }
+  });
+  
+  const sessionData = await res.json();
+  if (sessionData.status === 'paid') {
+    clearInterval(pollInterval);
+    // Success! The generic webhook was already fired by Zuup Auth, 
+    // so your database is updated. Just refresh your UI.
+    refreshData();
   }
-});
-
-const session = await verifyRes.json();
-if (session.status === "paid") {
-  // Payment is 100% verified and secure. 
-  // You can access your original notes here: session.notes.email
-  // Proceed with database updates!
-}
+}, 3000);
 ```
+
+**Step 3: The Generic Webhook Execution**
+When Razorpay confirms the payment, Zuup Auth internally executes:
+```javascript
+fetch(\`\${SUPABASE_URL}\${webhook_path}\`, {
+  method: "POST",
+  headers: { "Authorization": \`Bearer \${SUPABASE_SERVICE_ROLE_KEY}\` },
+  body: JSON.stringify(webhook_body)
+})
+```
+This entirely decouples your database schema from the payment gateway. Any new Zuup project can just pass its own RPC endpoint and payload to securely process payments!
 
 ---
 

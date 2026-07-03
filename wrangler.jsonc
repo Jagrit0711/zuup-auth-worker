@@ -15,5 +15,11 @@
       "binding": "ZUUP_OAUTH",
       "id": "1acf18e2335342ba876a8063a1da5bfc"
     }
+  ],
+  "routes": [
+    {
+      "pattern": "auth.zuup.dev",
+      "custom_domain": true
+    }
   ]
 }
