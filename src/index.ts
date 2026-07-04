@@ -14,6 +14,8 @@ type Bindings = {
   TURNSTILE_SECRET_KEY: string;
   RAZORPAY_KEY_ID: string;
   RAZORPAY_KEY_SECRET: string;
+  MERIPEHCHAAN_CLIENT_ID: string;
+  MERIPEHCHAAN_CLIENT_SECRET: string;
   RATE_LIMITER: any;
   ZUUP_OAUTH: any;
 };
@@ -28,8 +30,8 @@ app.use('*', secureHeaders({
     styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
     imgSrc: ["'self'", "data:", "https://raw.githubusercontent.com", "https://zuup.dev"],
-    connectSrc: ["'self'", "https://auth.zuup.dev", "https://*.supabase.co", "https://challenges.cloudflare.com"],
-    frameSrc: ["'self'", "https://challenges.cloudflare.com", "https://api.razorpay.com"],
+    connectSrc: ["'self'", "https://auth.zuup.dev", "https://*.supabase.co", "https://challenges.cloudflare.com", "https://digilocker.meripehchaan.gov.in"],
+    frameSrc: ["'self'", "https://challenges.cloudflare.com", "https://api.razorpay.com", "https://digilocker.meripehchaan.gov.in"],
   }
 }));
 app.use('/*', cors({
@@ -542,7 +544,7 @@ app.get('/login', async (c) => {
         return c.redirect(responseData.redirect_to);
       } else if (redirectTo) {
         const url = new URL(redirectTo);
-        url.hash = `access_token=${responseData.token || token}&token_type=bearer`;
+        url.searchParams.set('token', responseData.token || token);
         return c.redirect(url.toString());
       } else {
         return c.redirect(`https://zuup.dev/dashboard#access_token=${responseData.token || token}&refresh_token=${responseData.session?.refresh_token || ""}&expires_in=${responseData.session?.expires_in || 3600}&token_type=bearer`);
@@ -569,6 +571,34 @@ app.get('/forgot-password', (c) => {
 // ==========================================
 // 🛠️ "WEIRD TECHNICAL" ROOT LANDING PAGE
 // ==========================================
+app.get('/api/health', async (c) => {
+  // Check Supabase
+  let dbStatus = 'down';
+  try {
+    const dbReq = await fetch(c.env.SUPABASE_URL + '/rest/v1/', {
+      headers: { apikey: c.env.SUPABASE_ANON_KEY || '' }
+    });
+    if (dbReq.ok || dbReq.status === 401 || dbReq.status === 400) {
+      dbStatus = 'operational';
+    }
+  } catch(e) {}
+
+  // Check Razorpay
+  let paymentStatus = 'down';
+  try {
+    const pReq = await fetch('https://api.razorpay.com');
+    if (pReq.ok || pReq.status === 401 || pReq.status === 404 || pReq.status === 400 || pReq.status === 403) {
+      paymentStatus = 'operational';
+    }
+  } catch(e) {}
+
+  return c.json({
+    edge: 'operational',
+    database: dbStatus,
+    payments: paymentStatus
+  });
+});
+
 app.get('/', (c) => {
   c.header('Cache-Control', 'public, max-age=3600');
   return c.html(`
@@ -577,15 +607,20 @@ app.get('/', (c) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zuup Identity Infrastructure</title>
+    <title>Zuup Identity & Payment Infrastructure</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         body {
-            background-color: #050505;
+            background: radial-gradient(circle at 50% 50%, #1a1a2e 0%, #050505 100%);
             color: #33C481;
-            font-family: 'Courier New', Courier, monospace;
-            padding: 2rem;
+            font-family: 'JetBrains Mono', monospace;
+            padding: 0;
             margin: 0;
+            height: 100vh;
             overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
         .scanline {
             width: 100%;
@@ -601,48 +636,148 @@ app.get('/', (c) => {
             0% { top: -100px; }
             100% { top: 100vh; }
         }
-        .header { font-size: 2rem; font-weight: bold; margin-bottom: 2rem; color: #F04F67; text-shadow: 0 0 10px rgba(240,79,103,0.5); }
-        .log { margin: 0.5rem 0; opacity: 0; animation: fadein 0.1s forwards; }
+        .terminal {
+            background: rgba(10, 10, 15, 0.7);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 3rem;
+            width: 90%;
+            max-width: 800px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.05);
+            position: relative;
+        }
+        .terminal::before {
+            content: '';
+            position: absolute;
+            top: -1px; left: 0; right: 0; height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(240,79,103,0.5), transparent);
+        }
+        .header { 
+            font-size: 1.5rem; 
+            font-weight: 700; 
+            margin-bottom: 2rem; 
+            color: #F04F67; 
+            text-shadow: 0 0 20px rgba(240,79,103,0.4); 
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header img {
+            width: 32px;
+            height: 32px;
+            filter: drop-shadow(0 0 8px rgba(240,79,103,0.5));
+        }
+        .log { 
+            margin: 0.8rem 0; 
+            font-size: 1rem;
+            opacity: 0; 
+            animation: fadein 0.3s ease-out forwards; 
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .log-prefix { color: #888; font-size: 0.9em; }
         .blink { animation: blink 1s step-end infinite; }
-        @keyframes fadein { to { opacity: 1; } }
+        @keyframes fadein { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes blink { 50% { opacity: 0; } }
+        .status-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        .status-ok { background: rgba(45,156,219,0.2); color: #2D9CDB; border: 1px solid rgba(45,156,219,0.3); }
+        .status-error { background: rgba(240,79,103,0.2); color: #F04F67; border: 1px solid rgba(240,79,103,0.3); }
     </style>
 </head>
 <body>
     <div class="scanline"></div>
-    <div class="header">ZUUP IDENTITY INFRASTRUCTURE [v2.4.0]</div>
-    <div id="logs"></div>
-    <div style="margin-top:2rem;">> <span class="blink">_</span></div>
+    <div class="terminal">
+        <div class="header">
+            <img src="https://zuup.dev/zuupw.png" alt="Zuup">
+            ZUUP INFRASTRUCTURE NODE
+        </div>
+        <div id="logs"></div>
+        <div style="margin-top:2rem; display:flex; gap:10px; align-items:center;">
+            <span class="log-prefix">sys@zuup:~$</span> <span class="blink">_</span>
+        </div>
+    </div>
     
     <script>
-        const messages = [
-            "[SYSTEM] Initializing Zuup SSO Gateway...",
-            "[OK] Database connection established.",
-            "[OK] Loaded 4,815 secure identities.",
-            "[WARN] Unauthorized telemetry ping detected. Dropping packet.",
-            "[INFO] OAuth 2.1 Provider running on secure edge nodes.",
-            "[OK] Moza Protocol is ACTIVE.",
-            "...",
-            "Routing traffic to appropriate Zuup services.",
-            "System is fully operational. Awaiting authentication requests."
-        ];
-        
-        let i = 0;
         const container = document.getElementById('logs');
         
-        function appendLog() {
-            if (i < messages.length) {
-                const el = document.createElement('div');
-                el.className = 'log';
-                el.innerText = '> ' + messages[i];
-                if (messages[i].includes('[WARN]')) el.style.color = '#FDBF2A';
-                if (messages[i].includes('[OK]')) el.style.color = '#2D9CDB';
-                container.appendChild(el);
-                i++;
-                setTimeout(appendLog, Math.random() * 800 + 200);
+        function addLog(msg, type = 'info') {
+            const el = document.createElement('div');
+            el.className = 'log';
+            
+            const prefix = document.createElement('span');
+            prefix.className = 'log-prefix';
+            
+            const d = new Date();
+            prefix.innerText = '[' + d.toISOString().split('T')[1].slice(0,8) + ']';
+            
+            const content = document.createElement('span');
+            
+            if (type === 'info') {
+                content.innerText = msg;
+                content.style.color = '#33C481';
+            } else if (type === 'ok') {
+                content.innerHTML = '<span class="status-badge status-ok">OK</span> ' + msg;
+                content.style.color = '#fff';
+            } else if (type === 'error') {
+                content.innerHTML = '<span class="status-badge status-error">ERR</span> ' + msg;
+                content.style.color = '#fff';
+            }
+            
+            el.appendChild(prefix);
+            el.appendChild(content);
+            container.appendChild(el);
+        }
+
+        async function init() {
+            addLog("Zuup SSO, Payment, and Cloudflare Provider for all Zuup sites like summer.zuup.dev", "info");
+            await new Promise(r => setTimeout(r, 800));
+            addLog("Initializing secure realtime health checks...", "info");
+            
+            try {
+                const res = await fetch('/api/health');
+                const data = await res.json();
+                
+                await new Promise(r => setTimeout(r, 600));
+                
+                if (data.edge === 'operational') {
+                    addLog("Cloudflare Edge Network", "ok");
+                } else {
+                    addLog("Cloudflare Edge Network", "error");
+                }
+
+                await new Promise(r => setTimeout(r, 400));
+
+                if (data.database === 'operational') {
+                    addLog("Supabase Database Cluster", "ok");
+                } else {
+                    addLog("Supabase Database Cluster", "error");
+                }
+
+                await new Promise(r => setTimeout(r, 400));
+
+                if (data.payments === 'operational') {
+                    addLog("Razorpay Payment Gateway", "ok");
+                } else {
+                    addLog("Razorpay Payment Gateway", "error");
+                }
+
+                await new Promise(r => setTimeout(r, 800));
+                addLog("System fully operational. Awaiting requests.", "info");
+
+            } catch (e) {
+                addLog("Failed to reach Edge Health API.", "error");
             }
         }
-        setTimeout(appendLog, 500);
+
+        init();
     </script>
 </body>
 </html>
@@ -968,6 +1103,273 @@ app.post('/api/oauth/token', async (c) => {
   return c.json({
     access_token: codeData.access_token,
     user: codeData.user
+  });
+});
+
+// ==========================================
+// MERI PEHCHAAN (DIGILOCKER) KYC VERIFICATION
+// ==========================================
+
+// Helper: Generate PKCE code_verifier and code_challenge
+const generatePKCE = async () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  let verifier = '';
+  const randomValues = new Uint8Array(128);
+  crypto.getRandomValues(randomValues);
+  for (const val of randomValues) {
+    verifier += chars[val % chars.length];
+  }
+  
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+  
+  return { code_verifier: verifier, code_challenge: base64 };
+};
+
+// Helper: Extract user_id from Bearer token
+const extractUserId = async (c: any): Promise<string | null> => {
+  const authHeader = c.req.header('Authorization');
+  let token = getCookie(c, '__Secure-zuup_session');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  }
+  if (!token || !c.env.SUPABASE_JWT_SECRET) return null;
+  try {
+    let secretKey;
+    if (c.env.SUPABASE_JWT_SECRET.trim().startsWith('{')) {
+      const jwkData = JSON.parse(c.env.SUPABASE_JWT_SECRET);
+      const jwk = jwkData.keys ? jwkData.keys[0] : jwkData;
+      secretKey = await importJWK(jwk, jwk.alg || 'HS256');
+    } else {
+      secretKey = new TextEncoder().encode(c.env.SUPABASE_JWT_SECRET);
+    }
+    const { payload } = await jwtVerify(token, secretKey);
+    return (payload.sub as string) || null;
+  } catch {
+    return null;
+  }
+};
+
+app.post('/api/kyc/initiate', async (c) => {
+  const userId = await extractUserId(c);
+  if (!userId) {
+    return c.json({ error: 'Authentication required. Please log in first.' }, 401);
+  }
+
+  if (!c.env.MERIPEHCHAAN_CLIENT_ID) {
+    return c.json({ error: 'Meri Pehchaan is not configured on this server.' }, 500);
+  }
+
+  const body = await c.req.json() as any;
+  const callback_url = body.callback_url;
+  if (!callback_url) {
+    return c.json({ error: 'callback_url is required' }, 400);
+  }
+
+  // Generate PKCE pair
+  const { code_verifier, code_challenge } = await generatePKCE();
+
+  // Generate unique state to link the callback back to this session
+  const state = 'kyc_' + crypto.randomUUID().replace(/-/g, '');
+
+  // Store session in KV (10 min TTL)
+  await c.env.ZUUP_OAUTH.put(`kyc_session_${state}`, JSON.stringify({
+    code_verifier,
+    callback_url,
+    user_id: userId,
+    created_at: Date.now()
+  }), { expirationTtl: 600 });
+
+  // Build the scopes (must be space-separated in OAuth, URLSearchParams will format them correctly)
+  const scopes = (body.scopes || 'openid email careof address picture avs apaardetails userdetails').replace(/\+/g, ' ');
+
+  // Build DigiLocker authorize URL
+  const params = new URLSearchParams({
+    response_type: 'code',
+    client_id: c.env.MERIPEHCHAAN_CLIENT_ID,
+    state: state,
+    redirect_uri: 'https://auth.zuup.dev/api/kyc/callback',
+    code_challenge: code_challenge,
+    code_challenge_method: 'S256',
+    dl_flow: body.dl_flow || 'signin',
+    acr: body.acr || 'aadhaar+email+mobile',
+    amr: body.amr || 'aadhaar+exists_ac_pin',
+    scope: scopes
+  });
+
+  const authorize_url = `https://digilocker.meripehchaan.gov.in/public/oauth2/1/authorize?${params.toString()}`;
+
+  return c.json({ authorize_url, state });
+});
+
+app.get('/api/kyc/callback', async (c) => {
+  const code = c.req.query('code');
+  const state = c.req.query('state');
+  const error = c.req.query('error');
+  const errorDesc = c.req.query('error_description');
+
+  // Handle DigiLocker errors
+  if (error) {
+    // Try to get the callback URL from the session
+    let fallbackUrl = 'https://zuup.dev';
+    if (state) {
+      const sessionStr = await c.env.ZUUP_OAUTH.get(`kyc_session_${state}`);
+      if (sessionStr) {
+        const session = JSON.parse(sessionStr);
+        fallbackUrl = session.callback_url;
+        await c.env.ZUUP_OAUTH.delete(`kyc_session_${state}`);
+      }
+    }
+    const errorUrl = new URL(fallbackUrl);
+    errorUrl.searchParams.set('kyc_status', 'failed');
+    errorUrl.searchParams.set('error', errorDesc || error);
+    return c.redirect(errorUrl.toString());
+  }
+
+  if (!code || !state) {
+    return c.json({ error: 'Missing code or state parameter' }, 400);
+  }
+
+  // Retrieve session from KV
+  const sessionStr = await c.env.ZUUP_OAUTH.get(`kyc_session_${state}`);
+  if (!sessionStr) {
+    return c.json({ error: 'KYC session expired or invalid. Please try again.' }, 400);
+  }
+
+  const session = JSON.parse(sessionStr);
+  // Clean up the session immediately
+  await c.env.ZUUP_OAUTH.delete(`kyc_session_${state}`);
+
+  try {
+    // Exchange code for access_token + id_token using PKCE
+    const tokenRes = await fetch('https://digilocker.meripehchaan.gov.in/public/oauth2/2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code: code,
+        grant_type: 'authorization_code',
+        client_id: c.env.MERIPEHCHAAN_CLIENT_ID,
+        client_secret: c.env.MERIPEHCHAAN_CLIENT_SECRET,
+        redirect_uri: 'https://auth.zuup.dev/api/kyc/callback',
+        code_verifier: session.code_verifier
+      }).toString()
+    });
+
+    if (!tokenRes.ok) {
+      const errBody = await tokenRes.text();
+      const errorUrl = new URL(session.callback_url);
+      errorUrl.searchParams.set('kyc_status', 'failed');
+      errorUrl.searchParams.set('error', `Token exchange failed: ${errBody}`);
+      return c.redirect(errorUrl.toString());
+    }
+
+    const tokenData = await tokenRes.json() as any;
+    const accessToken = tokenData.access_token;
+    const idToken = tokenData.id_token;
+
+    // Fetch user details from DigiLocker
+    const userRes = await fetch('https://digilocker.meripehchaan.gov.in/public/oauth2/1/user', {
+      headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    let userData: any = {};
+    if (userRes.ok) {
+      userData = await userRes.json() as any;
+    }
+
+    // Decode id_token to extract claims (Aadhaar, PAN, etc.)
+    let idTokenClaims: any = {};
+    if (idToken) {
+      try {
+        const parts = idToken.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+          idTokenClaims = payload;
+        }
+      } catch { /* id_token decode is best-effort */ }
+    }
+
+    // Store verification in Supabase
+    const supabaseAdmin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+
+    const verificationRecord = {
+      user_id: session.user_id,
+      provider: 'meripehchaan',
+      digilocker_id: userData.digilockerid || tokenData.digilockerid || null,
+      verified_name: userData.name || tokenData.name || idTokenClaims.given_name || null,
+      dob: userData.dob || tokenData.dob || idTokenClaims.birthdate || null,
+      gender: userData.gender || tokenData.gender || null,
+      masked_aadhaar: idTokenClaims.masked_aadhaar || null,
+      pan_number: idTokenClaims.pan_number || null,
+      email: idTokenClaims.email || null,
+      verified_at: new Date().toISOString(),
+      raw_id_token: idToken || null
+    };
+
+    const { error: dbError } = await supabaseAdmin
+      .from('kyc_verifications')
+      .upsert(verificationRecord, { onConflict: 'user_id,provider' });
+
+    // Redirect back to the calling site
+    const successUrl = new URL(session.callback_url);
+    successUrl.searchParams.set('kyc_status', 'verified');
+    successUrl.searchParams.set('kyc_name', verificationRecord.verified_name || '');
+    if (dbError) {
+      successUrl.searchParams.set('kyc_warning', 'Verified but failed to save: ' + dbError.message);
+    }
+    return c.redirect(successUrl.toString());
+
+  } catch (err: any) {
+    const errorUrl = new URL(session.callback_url);
+    errorUrl.searchParams.set('kyc_status', 'failed');
+    errorUrl.searchParams.set('error', err.message || 'Unknown error during verification');
+    return c.redirect(errorUrl.toString());
+  }
+});
+
+app.get('/api/kyc/status/:userId', async (c) => {
+  const requesterId = await extractUserId(c);
+  if (!requesterId) {
+    return c.json({ error: 'Authentication required' }, 401);
+  }
+
+  const targetUserId = c.req.param('userId');
+
+  // Only allow users to check their own KYC status (or admin in future)
+  if (requesterId !== targetUserId) {
+    return c.json({ error: 'You can only check your own KYC status' }, 403);
+  }
+
+  const supabaseAdmin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+  const { data, error: dbError } = await supabaseAdmin
+    .from('kyc_verifications')
+    .select('verified_name, dob, gender, masked_aadhaar, email, verified_at, provider')
+    .eq('user_id', targetUserId)
+    .eq('provider', 'meripehchaan')
+    .maybeSingle();
+
+  if (dbError) {
+    return c.json({ error: 'Failed to fetch KYC status' }, 500);
+  }
+
+  if (!data) {
+    return c.json({ verified: false });
+  }
+
+  return c.json({
+    verified: true,
+    verified_name: data.verified_name,
+    dob: data.dob,
+    gender: data.gender,
+    masked_aadhaar: data.masked_aadhaar,
+    email: data.email,
+    verified_at: data.verified_at,
+    provider: data.provider
   });
 });
 
@@ -1393,24 +1795,7 @@ app.all('/*', async (c) => {
   headers.delete('Host');
   headers.delete('X-Forwarded-Host');
   
-  // GATEWAY SECRET VALIDATION
-  // The frontend passes the Gateway Secret in the 'apikey' header (or URL param) 
-  // instead of the real Supabase anon key.
-  const incomingApiKeyHeader = headers.get('apikey');
-  const incomingApiKeyUrl = targetUrl.searchParams.get('apikey');
-  const providedSecret = incomingApiKeyHeader || incomingApiKeyUrl;
 
-  if (!c.env.GATEWAY_SECRET) {
-    return c.json({ error: 'Server configuration error: GATEWAY_SECRET is missing.' }, 500);
-  }
-
-  const isBrowserCallback = targetUrl.pathname.startsWith('/auth/v1/callback') || targetUrl.pathname.startsWith('/auth/v1/authorize') || targetUrl.pathname.startsWith('/auth/v1/verify');
-  
-  if (!isBrowserCallback) {
-    if (!providedSecret || providedSecret !== c.env.GATEWAY_SECRET) {
-      return c.json({ error: 'Unauthorized: Invalid or missing Gateway Secret' }, 401);
-    }
-  }
 
   // Always inject the correct apikey from the worker's secrets
   if (c.env.SUPABASE_ANON_KEY) {
