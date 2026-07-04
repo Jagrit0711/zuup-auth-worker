@@ -1,288 +1,127 @@
-# Zuup Auth Gateway & SSO Provider 
+# 🚀 Zuup Auth: The Ultimate Middleman
 
-Zuup Auth is a high-performance, edge-first authentication proxy built on Cloudflare Workers and Hono. It acts as a blazing-fast centralized login gateway for all your services, acting as a direct proxy to your Supabase backend while providing enterprise-grade security features out of the box.
+Welcome to the **Zuup Auth Gateway**! 
 
-Additionally, Zuup Auth functions as a full **OAuth 2.0 Identity Provider (IdP)**. It allows third-party websites or your own microservices to easily implement "Sign in with Zuup" functionality!
+Think of this as the bouncer, the cashier, and the ID checker for all your websites, rolled into one blazing-fast Cloudflare Worker.
 
-## 🌟 Features
-- **Supabase Reverse Proxy:** Intercepts frontend requests to Supabase and seamlessly injects your hidden Supabase anon/service-role keys securely at the edge.
-- **"Sign In With Zuup" SSO:** Fully functional OAuth 2.0 flow for third-party developer integrations.
-- **Enterprise Bot Protection:** Seamless Cloudflare Turnstile integration directly in the Alpine.js forms.
-- **Global Rate Limiting:** Backed by Cloudflare KV, restricting malicious IP addresses from brute-forcing logins.
-- **Session Fingerprinting:** Binds user sessions to their IP and User-Agent to prevent session hijacking.
-- **Edge JWT Verification:** Instant edge verification using `jose` before requests hit Supabase.
+If you have a frontend app (like `example.com`), you **never** want to expose your actual database keys or payment secrets to the browser. Instead, your frontend talks to `auth.zuup.dev` (the middleman). We verify who they are, inject the super-secret keys server-side, and then securely talk to Supabase, Razorpay, or the Indian Government on their behalf. 
+
+## 🗺️ The Architecture (How it works)
+
+```mermaid
+flowchart TD
+    %% Define Styles
+    classDef middleman fill:#0f172a,stroke:#3b82f6,stroke-width:3px,color:#fff,font-weight:bold
+    classDef external fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#cbd5e1
+    classDef client fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff
+
+    CF[Cloudflare\nProvides the environment & edge speed\nHandles Turnstile (Captcha) & KV]:::external
+
+    Z[auth.zuup.dev\n(aka the middle man)\n\nThe Unified SSO, Database Gateway,\nand Payment Gateway]:::middleman
+
+    EX[example.com\nNeeds to talk to the Database,\nAuth, or Payments]:::client
+
+    SB[Supabase\nProvides the actual database\nand JWT validation]:::external
+    MP[Meri Pehchaan / DigiLocker\nProvides Aadhaar-based Identity Verification\n(Name, Address, Gender, Photo)]:::external
+    RP[Razorpay\nHandles the actual money transfer\nand card processing]:::external
+
+    %% Connections
+    CF --> Z
+    
+    EX -- "1. Send a random secret/token\nfrom example.com to auth.zuup.dev" --> Z
+    Z -- "2. Magic happens here.\nKeys are injected safely." --> EX
+
+    Z <-->|Validates JWTs &\nProxies Queries| SB
+    Z <-->|Verifies Government ID\n(KYC)| MP
+    Z <-->|Creates Sessions &\nVerifies Signatures| RP
+```
 
 ---
 
-## 🛠️ How to use "Sign In With Zuup" (SSO Integration)
+## ✨ Core Features
 
-If you have a separate website (e.g., `https://my-awesome-app.com`) and you want users to log in using their Zuup credentials, you can easily integrate Zuup Auth as your SSO Provider.
-
-### Step 1: Generate an API Key
-First, you (the platform admin) need to generate a Client ID and Secret for the new application. Run this `curl` command against your Zuup Auth instance (making sure to pass your active login session cookie to authorize the request):
-
-```bash
-curl -X POST https://auth.zuup.dev/api/developer/keys \
-  -H "Content-Type: application/json" \
-  -H "Cookie: __Secure-zuup_session=YOUR_LOGIN_TOKEN" \
-  -d '{
-    "app_name": "My Awesome App",
-    "allowed_origins": ["https://my-awesome-app.com"]
-  }'
-```
-
-**Response:**
-```json
-{
-  "client_id": "zuup_a1b2c3d4...",
-  "client_secret": "zsec_x9y8z7...",
-  "allowed_origins": ["https://my-awesome-app.com"]
-}
-```
-
-Keep the `client_id` and `client_secret` safe!
-
-### Step 2: The Login Redirect
-On your application (`my-awesome-app.com`), create a "Sign In with Zuup" button. When the user clicks it, redirect them to the Zuup Auth login page, passing your `client_id` and a `redirect_uri` where they should be sent after a successful login.
-
-```html
-<a href="https://auth.zuup.dev/login?client_id=zuup_a1b2c3d4...&redirect_uri=https://my-awesome-app.com/callback">
-  Sign in with Zuup
-</a>
-```
-
-### Step 3: Receive the Authorization Code
-The user will see the beautiful Zuup Auth login UI. Once they successfully enter their credentials (or OTP) and pass the Turnstile security check, Zuup Auth will instantly redirect them back to your application with a short-lived `code`:
-
-```text
-https://my-awesome-app.com/callback?code=zcode_123456789...
-```
-
-### Step 4: Exchange the Code for User Data
-Now, your application's **Backend** must securely exchange this `code` for the user's actual session token and profile data. 
-
-*(Warning: Never expose your `client_secret` to the browser. This step MUST happen on your server!)*
-
-```javascript
-// Example Node.js Backend Code
-const response = await fetch('https://auth.zuup.dev/api/oauth/token', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    client_id: 'zuup_a1b2c3d4...',
-    client_secret: 'zsec_x9y8z7...',
-    code: req.query.code // The code from the URL
-  })
-});
-
-const data = await response.json();
-
-console.log(data.access_token); // The user's Supabase JWT!
-console.log(data.user);         // The user's profile metadata!
-```
-
-**You are now fully authenticated!** You can use `data.access_token` to make direct requests to Supabase on behalf of the user, or drop a cookie to log them into your application.
+1. **🔒 Secure Database Proxy:** We intercept Supabase requests, validate a custom `GATEWAY_SECRET` from your frontend, and silently swap it with your hidden `SERVICE_ROLE` or `ANON` keys. Your frontend never knows the real keys!
+2. **🔑 "Sign in with Zuup" SSO:** A full OAuth 2.0 Identity Provider. Let users log in to *any* of your side projects using their central Zuup account.
+3. **💳 Unified Payment Gateway:** A beautiful, Razorpay-powered checkout UI. Your frontend just asks for a session, and we handle the messy webhooks and signature verification.
+4. **🇮🇳 KYC Identity Verification:** Seamlessly verify users' real-world identities via Meri Pehchaan (DigiLocker) using a gorgeous, secure popup window.
 
 ---
 
-## 🛡️ Zero-Leakage Gateway Secret Architecture
+## 🛠️ Developer Guide: How to use it in your app
 
-You no longer need to expose your real `SUPABASE_URL` or `SUPABASE_ANON_KEY` to the internet! Zuup Auth has a built-in reverse proxy that strictly gates access and perfectly mimics the Supabase API, while secretly injecting your actual keys on the backend before the request reaches Supabase.
-
-To achieve 100% data security, you configure a custom `GATEWAY_SECRET` in this worker. Any request coming to the worker must pass this exact secret, otherwise it is immediately blocked.
-
-In your frontend application's `.env` file, replace your real Supabase credentials with your Zuup Auth domain and your custom Gateway Secret:
+### 1. The Database Proxy (Hiding your Supabase keys)
+In your frontend application (e.g. `example.com`), you don't use your real Supabase URL. You use this worker!
 
 ```env
+# In your frontend .env
 VITE_SUPABASE_URL=https://auth.zuup.dev
 VITE_SUPABASE_ANON_KEY=my_super_secret_gateway_key_99
 ```
 
-Then initialize the standard `supabase-js` client exactly as you normally would:
+When you initialize `supabase-js`, it sends requests to us. We check the gateway key, laugh at hackers, swap in the real keys, and forward it to Supabase. 100% secure.
 
+### 2. "Sign in with Zuup" (SSO)
+Want to let users log into a new project using Zuup?
+1. Redirect them to `https://auth.zuup.dev/login?client_id=YOUR_APP&redirect_uri=https://example.com/callback`
+2. They log in safely on our UI.
+3. We redirect them back with a `code`.
+4. Your backend calls `POST /api/oauth/token` with that code to get their profile and JWT!
+
+### 3. Identity Verification (Meri Pehchaan / KYC)
+Need to prove someone is a real human from India? We've built a drop-in, Razorpay-style popup that uses DigiLocker!
+
+**Step 1:** Create a session from your backend.
 ```javascript
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const gatewaySecret = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-// This sends requests to https://auth.zuup.dev
-// Zuup Auth intercepts the request, validates the 'gatewaySecret', 
-// replaces it with the real anon key, and securely proxies the request to your actual Supabase project!
-const supabase = createClient(supabaseUrl, gatewaySecret)
-```
-
-No more leaked anon keys, and 0% chance of direct database access even if your frontend source code goes public!
-
----
-
-## 💳 Unified Visual Payment Portal (Razorpay)
-
-Zuup Auth acts as a highly secure, unified payment processor (similar to Stripe Checkout) for all your sites. By moving your Razorpay keys entirely into the worker, we prevent front-end tampering and completely secure the payment flow. 
-
-When a user initiates a checkout on your frontend, your site's server creates a **Payment Session**, and the user is redirected to `auth.zuup.dev` to securely complete the transaction on a beautiful UI. Crucially, the worker can **automatically execute a generic Supabase RPC Webhook** upon payment success.
-
-**Step 1: Create a Checkout Session**
-From your backend/SSR framework, call Zuup Auth to generate a session, optionally passing a `webhook_path` and `webhook_body`.
-
-```javascript
-const response = await fetch("https://auth.zuup.dev/api/payments/create-session", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "apikey": process.env.GATEWAY_SECRET
-  },
-  body: JSON.stringify({
-    amount: 1500, // Amount in Rupees
-    currency: "INR",
-    site_name: "My Awesome App", // Shown on the payment portal
-    redirect_url: "https://myapp.com/results",
-    notes: { email: "user@example.com" },
-    
-    // THE MAGIC: If payment succeeds, Zuup Auth will securely call this endpoint 
-    // on your Supabase backend using its internal SUPABASE_SERVICE_ROLE_KEY!
-    webhook_path: "/rest/v1/rpc/mark_ticket_paid",
-    webhook_body: { user_email: "user@example.com" }
-  })
-});
-const { sessionUrl, sessionId } = await response.json();
-
-// 1. Open the sessionUrl in a popup or redirect the user
-// 2. Begin server-side polling using the sessionId!
-```
-
-**Step 2: Client Integration (Popup & Polling)**
-Instead of relying on fragile cross-origin callbacks, the best practice is to open the URL in a new popup window, and then have your frontend poll the worker for the session's status. The popup acts as a bridge showing the secure Zuup Auth UI.
-
-```javascript
-// 1. Open the payment portal in a popup
-const popup = window.open(sessionUrl, 'ZuupPayment', 'width=500,height=700');
-
-// 2. Start polling for payment status
-const pollInterval = setInterval(async () => {
-  const res = await fetch(`https://auth.zuup.dev/api/payments/session/${sessionId}`, {
-    headers: { "apikey": process.env.GATEWAY_SECRET } // If querying from backend, else use a proxy
-  });
-  
-  const sessionData = await res.json();
-  
-  if (sessionData.status === 'paid') {
-    clearInterval(pollInterval);
-    popup.close(); // Close the popup window
-    alert('Payment Successful!');
-    refreshData();
-  } 
-  
-  // If the user clicks "Cancel Payment" inside the popup, or closes the window:
-  else if (popup.closed) {
-    clearInterval(pollInterval);
-    // Do one final check just in case payment succeeded right before they closed it
-    const finalCheck = await fetch(`https://auth.zuup.dev/api/payments/session/${sessionId}`, {
-        headers: { "apikey": process.env.GATEWAY_SECRET }
-    }).then(r => r.json());
-    if (finalCheck.status !== 'paid') {
-       alert('Payment was cancelled or failed.');
-    }
-  }
-}, 2000);
-```
-
-**How the Popup Lifecycle Works:**
-1. **Initial UI:** `example.com` opens the popup. Zuup Auth displays a beautiful review screen (`example.com is requesting payment for ₹X`). 
-2. **Payment:** The user clicks "Pay Now". Razorpay opens securely on top.
-3. **Success:** Razorpay completes. Zuup Auth verifies the signature server-side and updates the session to `paid`. The popup safely closes itself or is closed by your polling loop.
-4. **Cancellation:** If the user clicks "Cancel Payment" on the UI, Zuup Auth securely closes the popup window. Your polling loop detects `popup.closed` and registers it as cancelled.
-
-**Step 3: The Generic Webhook Execution**
-When Razorpay confirms the payment, Zuup Auth internally executes:
-```javascript
-fetch(\`\${SUPABASE_URL}\${webhook_path}\`, {
-  method: "POST",
-  headers: { "Authorization": \`Bearer \${SUPABASE_SERVICE_ROLE_KEY}\` },
-  body: JSON.stringify(webhook_body)
-})
-```
-This entirely decouples your database schema from the payment gateway. Any new Zuup project can just pass its own RPC endpoint and payload to securely process payments!
-
----
-
-## 🇮🇳 Government Identity Verification (Meri Pehchaan / DigiLocker)
-
-Zuup Auth provides a fully integrated, Razorpay-style pop-up flow for Indian government identity verification using Meri Pehchaan (DigiLocker). This ensures that sites can reliably verify an individual's identity (fetching Aadhaar details, PAN, Date of Birth, Address, etc.) without having to build complex OAuth integrations themselves.
-
-**Step 1: Create a KYC Session**
-From your backend/SSR, call Zuup Auth to generate a secure session.
-
-\`\`\`javascript
 const response = await fetch("https://auth.zuup.dev/api/kyc/create-session", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
-    redirect_uri: "https://my-awesome-app.com/kyc-callback",
-    client_name: "My Awesome App"
+    redirect_uri: "https://example.com/kyc-success",
+    client_name: "Example App"
   })
 });
 const { session_id } = await response.json();
-\`\`\`
+```
 
-**Step 2: Client Integration (Popup)**
-Using the \`session_id\`, open the secure Zuup Auth KYC UI in a popup window. Zuup Auth will elegantly explain the process to the user, handle the DigiLocker redirect, extract their secure documents, save them to the central \`kyc_verifications\` table in Supabase, and finally redirect back to your \`redirect_uri\` with a success status!
-
-\`\`\`javascript
-// Open the KYC UI in a popup window centered on the screen
-const width = 500, height = 750;
-const left = (window.innerWidth / 2) - (width / 2);
-const top = (window.innerHeight / 2) - (height / 2);
-
-const popup = window.open(
-  \`https://auth.zuup.dev/kyc?session_id=\${session_id}\`,
-  'KYC_Verification',
-  \`width=\${width},height=\${height},top=\${top},left=\${left}\`
+**Step 2:** Open the magical popup in your frontend.
+```javascript
+window.open(
+  `https://auth.zuup.dev/kyc?session_id=${session_id}`,
+  'Zuup_KYC',
+  'width=500,height=750'
 );
-\`\`\`
+```
+The user sees a beautiful dark-mode UI, completes the DigiLocker flow, and their government details (Photo, Address, DOB, Masked Aadhaar) are instantly saved to the `kyc_verifications` table in Supabase. Your frontend popup then redirects back to your success page!
 
-**Step 3: Handle the Callback**
-Your \`kyc-callback\` page will receive a URL like:
-\`https://my-awesome-app.com/kyc-callback?kyc_status=verified&kyc_name=John+Doe\`
-
-If you used a popup, you can simply close it and notify the parent window:
-\`\`\`html
-<script>
-  if (window.opener) {
-    window.opener.postMessage({ type: 'KYC_SUCCESS', status: 'verified' }, '*');
-    window.close();
-  }
-</script>
-\`\`\`
-
-**Note on Data:** Zuup Auth securely extracts and stores the user's \`verified_name\`, \`dob\`, \`gender\`, \`masked_aadhaar\`, \`pan_number\`, \`photo\`, \`care_of\`, and \`address\`. It will **never** store the full Aadhaar number to maintain strict compliance.
+### 4. Taking Payments (Razorpay)
+Stop writing messy webhook code on every project!
+1. Call `POST /api/payments/create-session` from your backend to get a `sessionUrl`. You can even pass a custom Supabase RPC endpoint that we will automatically hit when the payment succeeds!
+2. Open the `sessionUrl` in a popup on your frontend.
+3. Poll `GET /api/payments/session/:id` to check when they paid.
+4. Done. You get paid, we verify the signatures, and the database is updated.
 
 ---
 
-## 🔒 Environment Setup
+## 💻 Running it yourself
 
-To run Zuup Auth, ensure you have the following secrets in your `.dev.vars` file (and securely uploaded to Cloudflare via `wrangler secret put`):
-
+Make sure your `.dev.vars` file is packed with the goods:
 ```ini
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=eyJhbGci...
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGci...
-SUPABASE_JWT_SECRET={"keys":[{"kty":"EC","crv":"P-256",...}]}
-TURNSTILE_SECRET_KEY=0x4AAAAAA...
+SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+TURNSTILE_SECRET_KEY=...
 GATEWAY_SECRET=my_super_secret_gateway_key_99
 ```
 
-You must also have your KV databases bound in `wrangler.jsonc`:
-- `RATE_LIMITER`
-- `ZUUP_OAUTH`
-
-## 🚀 Running Locally
+Run locally:
 ```bash
 npm install
 npm run dev
 ```
 
-## 🌐 Deployment
+Ship it:
 ```bash
 npx wrangler deploy
 ```
+
+*Built with ❤️ for a safer, faster web.*
