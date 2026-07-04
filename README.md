@@ -31,9 +31,9 @@ flowchart TD
     EX -- "1. Send a random secret/token\nfrom example.com to auth.zuup.dev" --> Z
     Z -- "2. Magic happens here.\nKeys are injected safely." --> EX
 
-    Z <-->|Validates JWTs &\nProxies Queries| SB
-    Z <-->|Verifies Government ID\n(KYC)| MP
-    Z <-->|Creates Sessions &\nVerifies Signatures| RP
+    Z <-->|"Validates JWTs &\nProxies Queries"| SB
+    Z <-->|"Verifies Government ID\n(KYC)"| MP
+    Z <-->|"Creates Sessions &\nVerifies Signatures"| RP
 ```
 
 ---
