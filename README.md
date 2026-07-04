@@ -123,7 +123,6 @@ const { sessionUrl, sessionId } = await response.json();
 ## Local Development and Deployment
 
 ### 1. Supabase Setup
-
 Before deploying, you must prepare your Supabase project:
 1. **Create a Project:** Go to [supabase.com](https://supabase.com) and create a new project.
 2. **Obtain API Keys:** Navigate to **Project Settings > API**. Here you will find your `Project URL`, your `anon` public key, and your `service_role` secret key.
@@ -132,8 +131,24 @@ Before deploying, you must prepare your Supabase project:
 5. **Enforce RLS:** Ensure strict Row Level Security (RLS) policies are active on all public-facing tables.
 6. **Migrations:** Run any necessary SQL migrations (like creating the `kyc_verifications` table) in the Supabase SQL Editor.
 
-### 2. Environment Variables
+### 2. Cloudflare Turnstile Setup (Captcha)
+To protect your login endpoints from bots:
+1. Go to your [Cloudflare Dashboard](https://dash.cloudflare.com) > **Turnstile**.
+2. Click **Add Site**, enter your domain name, and create the widget.
+3. You will receive a **Site Key** (for your frontend UI) and a **Secret Key** (`TURNSTILE_SECRET_KEY`) for this backend worker.
 
+### 3. Razorpay Setup
+To enable the unified payment gateway:
+1. Log in to the [Razorpay Dashboard](https://dashboard.razorpay.com).
+2. Go to **Settings > API Keys**.
+3. Click **Generate Key** to receive your `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
+
+### 4. Meri Pehchaan (DigiLocker) Setup
+To enable government identity verification:
+1. Register your application as an OAuth client on the [Meri Pehchaan / NSSO Portal](https://meripehchaan.gov.in).
+2. Note down your generated `MERIPEHCHAAN_CLIENT_ID` and `MERIPEHCHAAN_CLIENT_SECRET`.
+
+### 5. Environment Variables
 Create a `.dev.vars` file in the root of the project for local development:
 
 ```ini
@@ -143,10 +158,17 @@ SUPABASE_SERVICE_ROLE_KEY=your_real_service_role_key
 SUPABASE_JWT_SECRET=your_jwt_secret
 TURNSTILE_SECRET_KEY=your_cloudflare_turnstile_secret
 GATEWAY_SECRET=a_custom_secret_you_invent
+
+# Razorpay Integration
+RAZORPAY_KEY_ID=rzp_live_...
+RAZORPAY_KEY_SECRET=your_razorpay_secret
+
+# Meri Pehchaan KYC Integration
+MERIPEHCHAAN_CLIENT_ID=your_digilocker_client_id
+MERIPEHCHAAN_CLIENT_SECRET=your_digilocker_secret
 ```
 
-### 3. KV Namespaces
-
+### 6. KV Namespaces
 You must create two Cloudflare KV namespaces. Run these commands in your terminal:
 ```bash
 npx wrangler kv:namespace create RATE_LIMITER
@@ -154,8 +176,7 @@ npx wrangler kv:namespace create ZUUP_OAUTH
 ```
 Update your `wrangler.jsonc` file with the IDs returned by those commands.
 
-### 4. Running Locally
-
+### 7. Running Locally
 Install dependencies and start the Wrangler development server:
 
 ```bash
@@ -163,9 +184,8 @@ npm install
 npm run dev
 ```
 
-### 5. Deploying to Cloudflare on your own domain
-
-1. Push your secrets to your Cloudflare account securely:
+### 8. Deploying to Cloudflare on your own domain
+1. Push all your secrets to your Cloudflare account securely (you will be prompted to paste each one):
 ```bash
 npx wrangler secret put SUPABASE_URL
 npx wrangler secret put SUPABASE_ANON_KEY
@@ -173,6 +193,10 @@ npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put SUPABASE_JWT_SECRET
 npx wrangler secret put TURNSTILE_SECRET_KEY
 npx wrangler secret put GATEWAY_SECRET
+npx wrangler secret put RAZORPAY_KEY_ID
+npx wrangler secret put RAZORPAY_KEY_SECRET
+npx wrangler secret put MERIPEHCHAAN_CLIENT_ID
+npx wrangler secret put MERIPEHCHAAN_CLIENT_SECRET
 ```
 2. Deploy the worker:
 ```bash
