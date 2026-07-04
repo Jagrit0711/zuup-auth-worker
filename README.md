@@ -1,6 +1,6 @@
 # 🚀 Zuup Auth: The Ultimate Middleman
 
-Welcome to the **Zuup Auth Gateway**! 
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Jagrit0711/zuup-auth-worker)
 
 Think of this as the bouncer, the cashier, and the ID checker for all your websites, rolled into one blazing-fast Cloudflare Worker.
 
