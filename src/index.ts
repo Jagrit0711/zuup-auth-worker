@@ -947,6 +947,276 @@ app.post('/api/otp/verify', async (c) => {
   return c.json({ success: true, ...responseData });
 });
 
+app.post('/api/kyc/create-session', async (c) => {
+  try {
+    const body = await c.req.json() as any;
+    const redirect_uri = body.redirect_uri;
+    const client_name = body.client_name || 'This site';
+    
+    if (!redirect_uri) {
+      return c.json({ error: 'redirect_uri is required' }, 400);
+    }
+
+    const session_id = crypto.randomUUID().replace(/-/g, '');
+    await c.env.ZUUP_OAUTH.put(`kyc_checkout_${session_id}`, JSON.stringify({
+      redirect_uri,
+      client_name,
+      created_at: Date.now()
+    }), { expirationTtl: 900 });
+
+    return c.json({ session_id });
+  } catch (e: any) {
+    return c.json({ error: 'Invalid request' }, 400);
+  }
+});
+
+app.get('/kyc', async (c) => {
+  const sessionId = c.req.query('session_id');
+  if (!sessionId) {
+    return c.text('Missing session_id. Please restart verification from the app.', 400);
+  }
+
+  const checkoutStr = await c.env.ZUUP_OAUTH.get(`kyc_checkout_${sessionId}`);
+  if (!checkoutStr) {
+    return c.text('Session expired or invalid. Please restart verification from the app.', 400);
+  }
+
+  const checkoutSession = JSON.parse(checkoutStr);
+  const redirectUri = checkoutSession.redirect_uri;
+  const clientName = checkoutSession.client_name;
+
+  const userId = await extractUserId(c);
+  const currentUrl = encodeURIComponent(c.req.url);
+  
+  if (!userId) {
+    return c.redirect(`/login?redirect_to=${currentUrl}`);
+  }
+
+  // Check verification status
+  const supabaseAdmin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+  const { data: kycData } = await supabaseAdmin
+    .from('kyc_verifications')
+    .select('verified_name, verified_at')
+    .eq('user_id', userId)
+    .single();
+
+  const isVerified = !!kycData;
+  const cookieToken = getCookie(c, '__Secure-zuup_session') || '';
+
+  return c.html(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Identity Verification | Zuup Auth</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #000; color: #fff; }
+        .glass-panel {
+            background: rgba(20, 20, 22, 0.7);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #fff 0%, #a1a1aa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.39);
+        }
+        .btn-primary:hover {
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.23);
+            transform: translateY(-1px);
+        }
+        .loader {
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #fff;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 8px;
+            display: none;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 antialiased overflow-hidden">
+    
+    <!-- Decorative background blobs -->
+    <div class="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-emerald-600/10 blur-[120px] pointer-events-none"></div>
+    <div class="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/10 blur-[120px] pointer-events-none"></div>
+
+    <div class="w-full max-w-[420px] glass-panel rounded-3xl p-8 relative z-10">
+        
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-8 pb-6 border-b border-white/10">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center border border-white/10">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-400">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-[17px] font-semibold tracking-tight text-white/90">Zuup Identity</h1>
+                    <p class="text-[13px] text-zinc-400">Secure Verification</p>
+                </div>
+            </div>
+            <div class="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-medium tracking-wide uppercase">
+                Secured
+            </div>
+        </div>
+
+        ${isVerified ? `
+        <!-- ALREADY VERIFIED STATE -->
+        <div class="text-center mb-8">
+            <div class="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mx-auto mb-4">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-400">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+            </div>
+            <h2 class="text-2xl font-bold gradient-text tracking-tight mb-2">Identity Verified</h2>
+            <p class="text-sm text-zinc-400 leading-relaxed px-4">
+                You are verified as <strong class="text-white">${kycData.verified_name}</strong>.
+            </p>
+        </div>
+
+        <div class="bg-white/5 border border-white/10 rounded-2xl p-5 mb-8">
+            <p class="text-[13px] text-zinc-300 leading-relaxed mb-3">
+                <span class="font-semibold text-white">${clientName}</span> is requesting to verify your identity status.
+            </p>
+            <div class="flex items-start gap-3 mt-4 pt-4 border-t border-white/10">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-500 mt-0.5 shrink-0">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="12" y1="16" x2="12" y2="12"></line>
+                    <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <p class="text-xs text-zinc-400 leading-relaxed">
+                    No official ID documents or sensitive data will be shared. Only your verification status (Yes/No) and name are provided to the app.
+                </p>
+            </div>
+        </div>
+
+        <button onclick="handleAllow()" id="actionBtn" class="w-full btn-primary text-white font-semibold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center text-sm">
+            <span class="loader" id="btnLoader"></span>
+            <span id="btnText">Allow and Continue</span>
+        </button>
+
+        <script>
+            function handleAllow() {
+                const btn = document.getElementById('actionBtn');
+                btn.disabled = true;
+                btn.style.opacity = '0.7';
+                document.getElementById('btnLoader').style.display = 'inline-block';
+                document.getElementById('btnText').innerText = 'Redirecting...';
+                
+                const url = new URL('${redirectUri}');
+                url.searchParams.set('kyc_status', 'verified');
+                url.searchParams.set('kyc_name', '${kycData.verified_name}');
+                window.location.href = url.toString();
+            }
+        </script>
+        ` : `
+        <!-- NOT VERIFIED STATE -->
+        <div class="mb-6">
+            <h2 class="text-2xl font-bold gradient-text tracking-tight mb-2">Verify your Identity</h2>
+            <p class="text-[14px] text-zinc-400 leading-relaxed">
+                <span class="font-semibold text-white">${clientName}</span> requires government identity verification to proceed.
+            </p>
+        </div>
+
+        <div class="space-y-3 mb-8">
+            <div class="flex items-start gap-3 bg-white/5 border border-white/10 p-4 rounded-2xl">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-400 mt-0.5 shrink-0">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <p class="text-[13px] text-zinc-300 leading-relaxed">
+                    This process is mandatory for offline events and receiving grants to prevent fraud.
+                </p>
+            </div>
+            
+            <div class="flex items-start gap-3 bg-white/5 border border-white/10 p-4 rounded-2xl">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-blue-400 mt-0.5 shrink-0">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                </svg>
+                <p class="text-[13px] text-zinc-300 leading-relaxed">
+                    Zuup securely encrypts your data and <strong class="text-white">only stores a masked Aadhaar</strong> (last 4 digits). We never store your full Aadhaar number.
+                </p>
+            </div>
+        </div>
+
+        <button onclick="handleInitiate()" id="actionBtn" class="w-full btn-primary text-white font-semibold py-3.5 px-4 rounded-xl transition-all flex items-center justify-center text-sm gap-2">
+            <span class="loader" id="btnLoader"></span>
+            <span id="btnText">Verify via Meri Pehchaan</span>
+            <svg id="btnIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M5 12h14"></path>
+                <path d="M12 5l7 7-7 7"></path>
+            </svg>
+        </button>
+
+        <p class="text-center text-[11px] text-zinc-500 mt-5 uppercase tracking-widest font-medium">
+            Powered by DigiLocker & Govt. of India
+        </p>
+
+        <script>
+            async function handleInitiate() {
+                const btn = document.getElementById('actionBtn');
+                btn.disabled = true;
+                btn.style.opacity = '0.7';
+                document.getElementById('btnLoader').style.display = 'inline-block';
+                document.getElementById('btnIcon').style.display = 'none';
+                document.getElementById('btnText').innerText = 'Securely connecting...';
+
+                try {
+                    const res = await fetch('/api/kyc/initiate', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ${cookieToken}'
+                        },
+                        body: JSON.stringify({
+                            session_id: '${sessionId}'
+                        })
+                    });
+
+                    const data = await res.json();
+                    if (data.authorize_url) {
+                        window.location.href = data.authorize_url;
+                    } else {
+                        alert('Connection failed: ' + (data.error || 'Unknown error'));
+                        resetBtn();
+                    }
+                } catch (err) {
+                    alert('Connection error: ' + err.message);
+                    resetBtn();
+                }
+            }
+
+            function resetBtn() {
+                const btn = document.getElementById('actionBtn');
+                btn.disabled = false;
+                btn.style.opacity = '1';
+                document.getElementById('btnLoader').style.display = 'none';
+                document.getElementById('btnIcon').style.display = 'inline-block';
+                document.getElementById('btnText').innerText = 'Verify via Meri Pehchaan';
+            }
+        </script>
+        `}
+    </div>
+</body>
+</html>
+  `);
+});
+
 app.get('/update-password', (c) => {
   c.header('Cache-Control', 'public, max-age=300');
   return c.html(renderUpdatePasswordUI());
@@ -1166,10 +1436,18 @@ app.post('/api/kyc/initiate', async (c) => {
   }
 
   const body = await c.req.json() as any;
-  const callback_url = body.callback_url;
-  if (!callback_url) {
-    return c.json({ error: 'callback_url is required' }, 400);
+  const session_id = body.session_id;
+  if (!session_id) {
+    return c.json({ error: 'session_id is required' }, 400);
   }
+
+  const checkoutStr = await c.env.ZUUP_OAUTH.get(`kyc_checkout_${session_id}`);
+  if (!checkoutStr) {
+    return c.json({ error: 'Session expired or invalid' }, 400);
+  }
+
+  const checkoutSession = JSON.parse(checkoutStr);
+  const callback_url = checkoutSession.redirect_uri;
 
   // Generate PKCE pair
   const { code_verifier, code_challenge } = await generatePKCE();
@@ -1307,6 +1585,9 @@ app.get('/api/kyc/callback', async (c) => {
       masked_aadhaar: idTokenClaims.masked_aadhaar || null,
       pan_number: idTokenClaims.pan_number || null,
       email: idTokenClaims.email || null,
+      photo: idTokenClaims.picture || userData.picture || null,
+      care_of: idTokenClaims.care_of || idTokenClaims.careof || idTokenClaims.co || userData.care_of || null,
+      address: typeof idTokenClaims.address === 'object' ? JSON.stringify(idTokenClaims.address) : (idTokenClaims.address || userData.address || null),
       verified_at: new Date().toISOString(),
       raw_id_token: idToken || null
     };

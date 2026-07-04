@@ -206,6 +206,59 @@ This entirely decouples your database schema from the payment gateway. Any new Z
 
 ---
 
+## 🇮🇳 Government Identity Verification (Meri Pehchaan / DigiLocker)
+
+Zuup Auth provides a fully integrated, Razorpay-style pop-up flow for Indian government identity verification using Meri Pehchaan (DigiLocker). This ensures that sites can reliably verify an individual's identity (fetching Aadhaar details, PAN, Date of Birth, Address, etc.) without having to build complex OAuth integrations themselves.
+
+**Step 1: Create a KYC Session**
+From your backend/SSR, call Zuup Auth to generate a secure session.
+
+\`\`\`javascript
+const response = await fetch("https://auth.zuup.dev/api/kyc/create-session", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    redirect_uri: "https://my-awesome-app.com/kyc-callback",
+    client_name: "My Awesome App"
+  })
+});
+const { session_id } = await response.json();
+\`\`\`
+
+**Step 2: Client Integration (Popup)**
+Using the \`session_id\`, open the secure Zuup Auth KYC UI in a popup window. Zuup Auth will elegantly explain the process to the user, handle the DigiLocker redirect, extract their secure documents, save them to the central \`kyc_verifications\` table in Supabase, and finally redirect back to your \`redirect_uri\` with a success status!
+
+\`\`\`javascript
+// Open the KYC UI in a popup window centered on the screen
+const width = 500, height = 750;
+const left = (window.innerWidth / 2) - (width / 2);
+const top = (window.innerHeight / 2) - (height / 2);
+
+const popup = window.open(
+  \`https://auth.zuup.dev/kyc?session_id=\${session_id}\`,
+  'KYC_Verification',
+  \`width=\${width},height=\${height},top=\${top},left=\${left}\`
+);
+\`\`\`
+
+**Step 3: Handle the Callback**
+Your \`kyc-callback\` page will receive a URL like:
+\`https://my-awesome-app.com/kyc-callback?kyc_status=verified&kyc_name=John+Doe\`
+
+If you used a popup, you can simply close it and notify the parent window:
+\`\`\`html
+<script>
+  if (window.opener) {
+    window.opener.postMessage({ type: 'KYC_SUCCESS', status: 'verified' }, '*');
+    window.close();
+  }
+</script>
+\`\`\`
+
+**Note on Data:** Zuup Auth securely extracts and stores the user's \`verified_name\`, \`dob\`, \`gender\`, \`masked_aadhaar\`, \`pan_number\`, \`photo\`, \`care_of\`, and \`address\`. It will **never** store the full Aadhaar number to maintain strict compliance.
+
+---
+
 ## 🔒 Environment Setup
 
 To run Zuup Auth, ensure you have the following secrets in your `.dev.vars` file (and securely uploaded to Cloudflare via `wrangler secret put`):
