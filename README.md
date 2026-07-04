@@ -1,12 +1,10 @@
-# Zuup Auth: The Ultimate Middleman
+# Zuup Auth Gateway
 
-Welcome to the **Zuup Auth Gateway**! 
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Jagrit0711/zuup-auth-worker)
 
-Think of this as the bouncer, the cashier, and the ID checker for all your websites, rolled into one blazing-fast Cloudflare Worker.
+Zuup Auth Gateway is a high-performance authentication, identity, and database proxy built on Cloudflare Workers and Hono. It is designed to sit between your frontend applications and your backend services (like Supabase, Razorpay, or Identity Providers) to ensure that sensitive API keys and secrets are never exposed to the client browser.
 
-If you have a frontend app (like `example.com`), you **never** want to expose your actual database keys or payment secrets to the browser. Instead, your frontend talks to `auth.zuup.dev` (the middleman). We verify who they are, inject the super-secret keys server-side, and then securely talk to Supabase, Razorpay, or the Indian Government on their behalf. 
-
-## The Architecture (How it works)
+## System Architecture
 
 ```mermaid
 flowchart TD
@@ -36,43 +34,50 @@ flowchart TD
     Z <-->|"Creates Sessions &\nVerifies Signatures"| RP
 ```
 
----
+## How It Works
 
-## ✨ Core Features
+At its core, Zuup Auth acts as a secure middleware layer. 
 
-1. **🔒 Secure Database Proxy:** We intercept Supabase requests, validate a custom `GATEWAY_SECRET` from your frontend, and silently swap it with your hidden `SERVICE_ROLE` or `ANON` keys. Your frontend never knows the real keys!
-2. **🔑 "Sign in with Zuup" SSO:** A full OAuth 2.0 Identity Provider. Let users log in to *any* of your side projects using their central Zuup account.
-3. **💳 Unified Payment Gateway:** A beautiful, Razorpay-powered checkout UI. Your frontend just asks for a session, and we handle the messy webhooks and signature verification.
-4. **🇮🇳 KYC Identity Verification:** Seamlessly verify users' real-world identities via Meri Pehchaan (DigiLocker) using a gorgeous, secure popup window.
+1. **Database Proxy:** Frontend applications typically need to communicate with a database (like Supabase). However, exposing your Supabase Anon Key or Service Role Key in the frontend can lead to security vulnerabilities. With Zuup Auth, your frontend sends requests to auth.zuup.dev using a generic GATEWAY_SECRET. The worker intercepts this request, validates the secret, injects your actual Supabase keys securely from the edge, and proxies the request to the real database.
+2. **Single Sign-On (SSO):** Zuup Auth functions as an OAuth 2.0 Identity Provider. You can redirect users from any of your side projects to the Zuup Auth login page. Once they authenticate, they are redirected back to your application with a temporary authorization code, which your backend can exchange for their user profile and JWT.
+3. **Payment Gateway Integration:** Handling Razorpay webhooks and verifying signatures on every project is tedious. Zuup Auth unifies this. Your backend creates a payment session on Zuup Auth, your frontend opens the Zuup Auth payment UI in a popup, and upon successful payment, Zuup Auth automatically verifies the Razorpay signature and fires a secure RPC call to your Supabase database.
+4. **KYC Identity Verification:** Zuup Auth integrates natively with Meri Pehchaan (DigiLocker) to perform Indian Government identity verification. It handles the redirect flow, extracts verified details (Name, Address, DOB, masked Aadhaar), stores them in your database, and returns a verified status to your frontend.
 
----
+## Integration Guide
 
-## Developer Guide: How to use it in your app
+### 1. Database Proxy Setup
 
-### 1. The Database Proxy (Hiding your Supabase keys)
-In your frontend application (e.g. `example.com`), you don't use your real Supabase URL. You use this worker!
+Instead of exposing your Supabase credentials in your frontend application, set your environment variables to point to your Zuup Auth instance:
 
 ```env
-# In your frontend .env
-VITE_SUPABASE_URL=https://auth.zuup.dev
-VITE_SUPABASE_ANON_KEY=my_super_secret_gateway_key_99
+# Frontend .env
+VITE_SUPABASE_URL=https://auth.yourdomain.com
+VITE_SUPABASE_ANON_KEY=your_custom_gateway_secret
 ```
 
-When you initialize `supabase-js`, it sends requests to us. We check the gateway key, laugh at hackers, swap in the real keys, and forward it to Supabase. 100% secure.
+Initialize your Supabase client normally. All requests will now be routed through the worker, keeping your actual database keys completely hidden.
 
-### 2. "Sign in with Zuup" (SSO)
-Want to let users log into a new project using Zuup?
-1. Redirect them to `https://auth.zuup.dev/login?client_id=YOUR_APP&redirect_uri=https://example.com/callback`
-2. They log in safely on our UI.
-3. We redirect them back with a `code`.
-4. Your backend calls `POST /api/oauth/token` with that code to get their profile and JWT!
+> **Security Note regarding JWTs and RLS:** 
+> Zuup Auth verifies user sessions at the edge and securely passes the valid user JWT to Supabase. While hiding your Anon key prevents basic abuse, **it does not replace Row Level Security (RLS)**. Because valid authenticated users can still make requests, you must ensure your Supabase database has strict RLS policies enabled to govern exactly what data users can read or write.
 
-### 3. Identity Verification (Meri Pehchaan / KYC)
-Need to prove someone is a real human from India? We've built a drop-in, Razorpay-style popup that uses DigiLocker!
+### 2. Single Sign-On (SSO)
 
-**Step 1:** Create a session from your backend.
+To implement "Sign in with Zuup" on your frontend:
+
+1. Redirect the user to the login portal:
+   `https://auth.yourdomain.com/login?client_id=YOUR_APP&redirect_uri=https://example.com/callback`
+2. After successful authentication, the user will be redirected back with a code:
+   `https://example.com/callback?code=zcode_123...`
+3. Have your backend exchange this code for the user's JWT and profile:
+   `POST https://auth.yourdomain.com/api/oauth/token`
+
+### 3. Identity Verification (KYC)
+
+To verify a user's real-world identity using DigiLocker:
+
+1. Create a session from your backend:
 ```javascript
-const response = await fetch("https://auth.zuup.dev/api/kyc/create-session", {
+const response = await fetch("https://auth.yourdomain.com/api/kyc/create-session", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
@@ -83,45 +88,96 @@ const response = await fetch("https://auth.zuup.dev/api/kyc/create-session", {
 const { session_id } = await response.json();
 ```
 
-**Step 2:** Open the magical popup in your frontend.
+2. Open the UI in a popup on your frontend:
 ```javascript
 window.open(
-  `https://auth.zuup.dev/kyc?session_id=${session_id}`,
+  `https://auth.yourdomain.com/kyc?session_id=${session_id}`,
   'Zuup_KYC',
   'width=500,height=750'
 );
 ```
-The user sees a beautiful dark-mode UI, completes the DigiLocker flow, and their government details (Photo, Address, DOB, Masked Aadhaar) are instantly saved to the `kyc_verifications` table in Supabase. Your frontend popup then redirects back to your success page!
 
-### 4. Taking Payments (Razorpay)
-Stop writing messy webhook code on every project!
-1. Call `POST /api/payments/create-session` from your backend to get a `sessionUrl`. You can even pass a custom Supabase RPC endpoint that we will automatically hit when the payment succeeds!
-2. Open the `sessionUrl` in a popup on your frontend.
-3. Poll `GET /api/payments/session/:id` to check when they paid.
-4. Done. You get paid, we verify the signatures, and the database is updated.
+### 4. Payments (Razorpay)
 
----
-
-## Running it yourself
-
-Make sure your `.dev.vars` file is packed with the goods:
-```ini
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=...
-SUPABASE_SERVICE_ROLE_KEY=...
-TURNSTILE_SECRET_KEY=...
-GATEWAY_SECRET=my_super_secret_gateway_key_99
+1. Create a payment session from your backend:
+```javascript
+const response = await fetch("https://auth.yourdomain.com/api/payments/create-session", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "apikey": process.env.GATEWAY_SECRET
+  },
+  body: JSON.stringify({
+    amount: 1500,
+    currency: "INR",
+    site_name: "Example App",
+    webhook_path: "/rest/v1/rpc/mark_ticket_paid",
+    webhook_body: { user_id: "123" }
+  })
+});
+const { sessionUrl, sessionId } = await response.json();
 ```
 
-Run locally:
+2. Open `sessionUrl` in a popup and poll `GET /api/payments/session/:id` until the status changes to `paid`.
+
+## Local Development and Deployment
+
+### 1. Supabase Setup
+
+Before deploying, you must prepare your Supabase project:
+1. **Create a Project:** Go to [supabase.com](https://supabase.com) and create a new project.
+2. **Obtain API Keys:** Navigate to **Project Settings > API**. Here you will find your `Project URL`, your `anon` public key, and your `service_role` secret key.
+3. **Obtain JWT Secret:** On the same API settings page (or under **Project Settings > API > JWT Settings**), find your `JWT Secret`.
+4. **Enable Auth:** Go to **Authentication > Providers** and ensure Email/Password or your preferred login methods are enabled.
+5. **Enforce RLS:** Ensure strict Row Level Security (RLS) policies are active on all public-facing tables.
+6. **Migrations:** Run any necessary SQL migrations (like creating the `kyc_verifications` table) in the Supabase SQL Editor.
+
+### 2. Environment Variables
+
+Create a `.dev.vars` file in the root of the project for local development:
+
+```ini
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your_real_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_real_service_role_key
+SUPABASE_JWT_SECRET=your_jwt_secret
+TURNSTILE_SECRET_KEY=your_cloudflare_turnstile_secret
+GATEWAY_SECRET=a_custom_secret_you_invent
+```
+
+### 3. KV Namespaces
+
+You must create two Cloudflare KV namespaces. Run these commands in your terminal:
+```bash
+npx wrangler kv:namespace create RATE_LIMITER
+npx wrangler kv:namespace create ZUUP_OAUTH
+```
+Update your `wrangler.jsonc` file with the IDs returned by those commands.
+
+### 4. Running Locally
+
+Install dependencies and start the Wrangler development server:
+
 ```bash
 npm install
 npm run dev
 ```
 
-Ship it:
+### 5. Deploying to Cloudflare on your own domain
+
+1. Push your secrets to your Cloudflare account securely:
+```bash
+npx wrangler secret put SUPABASE_URL
+npx wrangler secret put SUPABASE_ANON_KEY
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+npx wrangler secret put SUPABASE_JWT_SECRET
+npx wrangler secret put TURNSTILE_SECRET_KEY
+npx wrangler secret put GATEWAY_SECRET
+```
+2. Deploy the worker:
 ```bash
 npx wrangler deploy
 ```
+3. To attach this worker to your own custom domain (e.g., `auth.yourdomain.com`), go to your Cloudflare Dashboard -> Workers & Pages -> Zuup Auth -> Triggers -> Custom Domains, and click "Add Custom Domain".
 
 *Built with ❤️ for a safer, faster web*
