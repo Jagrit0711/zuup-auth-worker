@@ -185,6 +185,10 @@ npm run dev
 ```
 
 ### 8. Deploying to Cloudflare on your own domain
+You can use the one-click deploy button to automatically clone and deploy this worker to your Cloudflare account, or follow the manual steps below:
+
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Jagrit0711/zuup-auth-worker)
+
 1. Push all your secrets to your Cloudflare account securely (you will be prompted to paste each one):
 ```bash
 npx wrangler secret put SUPABASE_URL
