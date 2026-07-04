@@ -15,15 +15,15 @@ flowchart TD
     classDef external fill:#1e293b,stroke:#64748b,stroke-width:2px,color:#cbd5e1
     classDef client fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff
 
-    CF[Cloudflare\nProvides the environment & edge speed\nHandles Turnstile (Captcha) & KV]:::external
+    CF["Cloudflare\nProvides the environment & edge speed\nHandles Turnstile (Captcha) & KV"]:::external
 
-    Z[auth.zuup.dev\n(aka the middle man)\n\nThe Unified SSO, Database Gateway,\nand Payment Gateway]:::middleman
+    Z["auth.zuup.dev\n(aka the middle man)\n\nThe Unified SSO, Database Gateway,\nand Payment Gateway"]:::middleman
 
-    EX[example.com\nNeeds to talk to the Database,\nAuth, or Payments]:::client
+    EX["example.com\nNeeds to talk to the Database,\nAuth, or Payments"]:::client
 
-    SB[Supabase\nProvides the actual database\nand JWT validation]:::external
-    MP[Meri Pehchaan / DigiLocker\nProvides Aadhaar-based Identity Verification\n(Name, Address, Gender, Photo)]:::external
-    RP[Razorpay\nHandles the actual money transfer\nand card processing]:::external
+    SB["Supabase\nProvides the actual database\nand JWT validation"]:::external
+    MP["Meri Pehchaan / DigiLocker\nProvides Aadhaar-based Identity Verification\n(Name, Address, Gender, Photo)"]:::external
+    RP["Razorpay\nHandles the actual money transfer\nand card processing"]:::external
 
     %% Connections
     CF --> Z
