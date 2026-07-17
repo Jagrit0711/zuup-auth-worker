@@ -2,6 +2,11 @@
 
 Zuup Auth Gateway is a high-performance authentication, identity, and database proxy built on Cloudflare Workers and Hono. It is designed to sit between your frontend applications and your backend services (like Supabase, Razorpay, or Identity Providers) to ensure that sensitive API keys and secrets are never exposed to the client browser.
 
+## Recent Updates (v2.84)
+- **Security Patch:** Secured the `/api/admin/users` endpoint to strictly require an `ADMIN_EMAIL` match against the authenticated user's JWT, preventing unauthorized users from accessing the global user list.
+- **UI & UX:** Updated the login and password reset UIs to feature a new, minimalist line-art sock puppet mascot ("Moza") optimized for dark mode.
+- **Password Reset Fix:** Fixed a critical bug in the password recovery flow related to regex parsing (`/\\+/g`) in AlpineJS templates and browser caching headers on the `/update-password` route.
+
 ## System Architecture
 
 ```mermaid
@@ -156,6 +161,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_real_service_role_key
 SUPABASE_JWT_SECRET=your_jwt_secret
 TURNSTILE_SECRET_KEY=your_cloudflare_turnstile_secret
 GATEWAY_SECRET=a_custom_secret_you_invent
+ADMIN_EMAIL=your_admin_email@domain.com
 
 # Razorpay Integration
 RAZORPAY_KEY_ID=rzp_live_...
@@ -195,6 +201,7 @@ npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put SUPABASE_JWT_SECRET
 npx wrangler secret put TURNSTILE_SECRET_KEY
 npx wrangler secret put GATEWAY_SECRET
+npx wrangler secret put ADMIN_EMAIL
 npx wrangler secret put RAZORPAY_KEY_ID
 npx wrangler secret put RAZORPAY_KEY_SECRET
 npx wrangler secret put MERIPEHCHAAN_CLIENT_ID
