@@ -15,6 +15,7 @@ import { createClient } from '@supabase/supabase-js';
 import { jwtVerify, importJWK } from 'jose';
 
 type Bindings = {
+  ADMIN_EMAIL?: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   GATEWAY_SECRET: string;
@@ -2440,12 +2441,18 @@ app.get('/api/admin/users', async (c) => {
         return c.json({ error: 'Database configuration missing' }, 500);
     }
     
-    // In a real app, verify token and check role='admin'. 
-    // We are skipping deep authorization for this demo implementation, 
-    // but the service role key enables us to fetch listUsers.
-    
+    // Verify token and check if the user is an admin
     const supabaseAdmin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+    const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(token);
     
+    if (authError || !authData?.user) {
+        return c.json({ error: 'Unauthorized: Invalid token' }, 401);
+    }
+    
+    const adminEmail = c.env.ADMIN_EMAIL || 'jagrit@zuup.dev';
+    if (authData.user.email !== adminEmail) {
+        return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
     try {
         const { data, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
         if (error) throw error;
