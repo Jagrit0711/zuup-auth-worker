@@ -2,16 +2,22 @@
   "name": "zuup-auth-worker",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "lint": "eslint src"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",
     "hono": "^4.4.6",
-    "jose": "^6.2.3"
+    "jimp": "^0.16.13",
+    "jose": "^6.2.3",
+    "puppeteer": "^25.3.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240529.0",
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
     "typescript": "^5.4.5",
+    "typescript-eslint": "^8.62.1",
     "wrangler": "^3.57.2"
   }
 }
