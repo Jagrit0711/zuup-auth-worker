@@ -867,6 +867,17 @@ const checkRateLimit = async (c: any) => {
   return true;
 };
 
+const checkGlobalRateLimit = async (c: any) => {
+  if (!c.env.RATE_LIMITER) return true;
+  const ip = c.req.header('cf-connecting-ip') || 'unknown';
+  const key = `global_rl_${ip}`;
+  const attempts = await c.env.RATE_LIMITER.get(key);
+  const count = attempts ? parseInt(attempts) : 0;
+  if (count >= 300) return false;
+  await c.env.RATE_LIMITER.put(key, (count + 1).toString(), { expirationTtl: 60 });
+  return true;
+};
+
 const resetRateLimit = async (c: any) => {
   if (!c.env.RATE_LIMITER) return;
   const ip = c.req.header('cf-connecting-ip') || 'unknown';
@@ -2486,6 +2497,17 @@ app.all('/*', async (c) => {
                          
   if (!isSupabasePath) {
     return c.json({ error: 'Not a Supabase Path', path: targetUrl.pathname }, 404);
+  }
+
+  // Block internal Supabase Auth settings and health endpoints from leaking configuration
+  const blockedPaths = ['/auth/v1/settings', '/auth/v1/health'];
+  if (blockedPaths.includes(targetUrl.pathname)) {
+    return c.json({ error: 'Access Denied' }, 403);
+  }
+
+  // Enforce global IP rate limit (300 requests per minute)
+  if (!await checkGlobalRateLimit(c)) {
+    return c.json({ error: 'Too many requests' }, 429);
   }
 
   targetUrl.hostname = supabaseHost;
