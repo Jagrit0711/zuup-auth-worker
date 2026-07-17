@@ -2460,8 +2460,10 @@ app.get('/api/admin/users', async (c) => {
         return c.json({ error: 'Unauthorized: Invalid token' }, 401);
     }
     
-    const adminEmail = c.env.ADMIN_EMAIL || 'jagrit@zuup.dev';
-    if (authData.user.email !== adminEmail) {
+    const isAdminRole = authData.user.app_metadata?.role === 'admin';
+    const isOwnerEmail = authData.user.email === (c.env.ADMIN_EMAIL || 'jagrit@zuup.dev');
+    
+    if (!isAdminRole && !isOwnerEmail) {
         return c.json({ error: 'Forbidden: Admin access required' }, 403);
     }
     try {
