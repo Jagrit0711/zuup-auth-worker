@@ -2,10 +2,11 @@
 
 Zuup Auth Gateway is a high-performance authentication, identity, and database proxy built on Cloudflare Workers and Hono. It is designed to sit between your frontend applications and your backend services (like Supabase, Razorpay, or Identity Providers) to ensure that sensitive API keys and secrets are never exposed to the client browser.
 
-## Recent Updates (v2.84)
-- **Security Patch:** Secured the `/api/admin/users` endpoint to strictly require an `ADMIN_EMAIL` match against the authenticated user's JWT, preventing unauthorized users from accessing the global user list.
+## Recent Updates (v2.85)
+- **Advanced RBAC:** Upgraded the Admin authentication checks to use Role-Based Access Control (`app_metadata.role === 'admin'`) embedded in the cryptographic JWT, providing un-spoofable security over simple email string checks.
+- **Proxy Blocklist & Bypass:** Blocked internal Supabase configuration endpoints (`/auth/v1/settings`, `/auth/v1/health`) from public access, implementing a secure bypass mechanism strictly for internal `GATEWAY_SECRET` traffic and authenticated sessions.
+- **Global Proxy Rate Limiting:** Deployed a strict Edge rate limiter capped at 300 requests per minute per IP to protect the database from DDoS and scraping abuse.
 - **UI & UX:** Updated the login and password reset UIs to feature a new, minimalist line-art sock puppet mascot ("Moza") optimized for dark mode.
-- **Password Reset Fix:** Fixed a critical bug in the password recovery flow related to regex parsing (`/\\+/g`) in AlpineJS templates and browser caching headers on the `/update-password` route.
 
 ## System Architecture
 

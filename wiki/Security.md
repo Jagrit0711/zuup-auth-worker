@@ -25,8 +25,26 @@ We leverage Cloudflare KV to maintain distributed, low-latency rate limit counte
 
 If an endpoint is hammered, the edge immediately returns a `429 Too Many Requests` without the core database ever knowing an attack occurred. This prevents our Supabase instance from being overwhelmed by DDoS attacks.
 
+- **Sensitive Routes:** Endpoints like login and password resets are strictly capped at 5 attempts per 15 minutes per IP.
+- **Global Proxy Routes:** General database queries routed through the proxy are globally capped at 300 requests per minute per IP.
+
 ## Admin Roles & Deep Authorization
 
 We enforce strict deep authorization on privileged endpoints. For example, endpoints that require the `SUPABASE_SERVICE_ROLE_KEY` (such as `/api/admin/users`) are heavily protected. 
 
-The Proxy extracts the JWT from the incoming request, verifies it with the database, and asserts that the `user.email` matches the `ADMIN_EMAIL` configured in the edge environment variables. If it does not match, a `403 Forbidden` is returned immediately.
+The Proxy extracts the JWT from the incoming request, cryptographically verifies it with the database, and asserts that the user possesses the `admin` role via Role-Based Access Control (`app_metadata.role === 'admin'`). 
+
+*(As a fallback, it also verifies if the `user.email` matches the `ADMIN_EMAIL` configured in the edge environment variables to prevent accidental lockouts).*
+
+If neither condition is met, a `403 Forbidden` is returned immediately.
+
+## Proxy Blocklists & Bypasses
+
+To prevent internal Supabase configurations and version details from leaking to the public internet, the Edge Proxy explicitly blocks direct access to routes like:
+- `/auth/v1/settings`
+- `/auth/v1/health`
+
+**Authorized Bypasses:**
+Because our internal applications require access to these settings, the proxy will automatically bypass the blocklist and authorize the request if:
+1. The `apikey` header matches the `GATEWAY_SECRET`.
+2. Or, a valid JWT session is provided via the `Authorization` header or `__Secure-zuup_session` cookie.
