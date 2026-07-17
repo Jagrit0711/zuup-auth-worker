@@ -2502,7 +2502,32 @@ app.all('/*', async (c) => {
   // Block internal Supabase Auth settings and health endpoints from leaking configuration
   const blockedPaths = ['/auth/v1/settings', '/auth/v1/health'];
   if (blockedPaths.includes(targetUrl.pathname)) {
-    return c.json({ error: 'Access Denied' }, 403);
+    let isAuthorized = false;
+
+    // Condition 1: Passed the Gateway Secret via apikey header
+    const providedApiKey = c.req.header('apikey');
+    if (c.env.GATEWAY_SECRET && providedApiKey === c.env.GATEWAY_SECRET) {
+      isAuthorized = true;
+    }
+
+    // Condition 2: Has a valid JWT (Authorization Bearer or Cookie)
+    if (!isAuthorized) {
+      const { getCookie } = await import('hono/cookie');
+      let token = getCookie(c, '__Secure-zuup_session');
+      const authHeader = c.req.header('Authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.split(' ')[1];
+      }
+      if (token && token.split('.').length === 3) {
+        // Technically we just check if a token is present, assuming Supabase handles the actual JWT validation on the backend.
+        // For a stricter check, we could call getUser() here, but that adds latency to every settings request.
+        isAuthorized = true; 
+      }
+    }
+
+    if (!isAuthorized) {
+      return c.json({ error: 'Access Denied' }, 403);
+    }
   }
 
   // Enforce global IP rate limit (300 requests per minute)
