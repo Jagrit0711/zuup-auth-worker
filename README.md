@@ -2,7 +2,8 @@
 
 Zuup Auth Gateway is a high-performance authentication, identity, and database proxy built on Cloudflare Workers and Hono. It is designed to sit between your frontend applications and your backend services (like Supabase, Razorpay, or Identity Providers) to ensure that sensitive API keys and secrets are never exposed to the client browser.
 
-## Recent Updates (v2.85)
+## Recent Updates (v2.90)
+- **Sign In & Sign Up with Google:** Added seamless Google OAuth support across both Sign In and Sign Up portals (`/login`, `/signup`, and `/auth/google`) with automatic Supabase account provisioning, edge token verification, and unified SSO cookie issuance.
 - **Advanced RBAC:** Upgraded the Admin authentication checks to use Role-Based Access Control (`app_metadata.role === 'admin'`) embedded in the cryptographic JWT, providing un-spoofable security over simple email string checks.
 - **Proxy Blocklist & Bypass:** Blocked internal Supabase configuration endpoints (`/auth/v1/settings`, `/auth/v1/health`) from public access, implementing a secure bypass mechanism strictly for internal `GATEWAY_SECRET` traffic and authenticated sessions.
 - **Global Proxy Rate Limiting:** Deployed a strict Edge rate limiter capped at 300 requests per minute per IP to protect the database from DDoS and scraping abuse.
@@ -75,7 +76,26 @@ To implement "Sign in with Zuup" on your frontend:
 3. Have your backend exchange this code for the user's JWT and profile:
    `POST https://auth.yourdomain.com/api/oauth/token`
 
-### 3. Identity Verification (KYC)
+### 3. Google OAuth & Social Sign-In
+
+Google Sign-In is supported natively on the unified login and signup screens (`/login` and `/signup`). Users can authenticate with one click using their Google Account.
+
+You can also initiate Google OAuth directly from any application or link:
+```html
+<a href="https://auth.zuup.dev/auth/google?redirect_to=https://example.com/dashboard">
+  Sign in with Google
+</a>
+```
+
+**Required Supabase Configuration:**
+1. In the **Supabase Dashboard** -> **Authentication** -> **Providers** -> **Google**:
+   - Enable the Google provider.
+   - Enter your Google Client ID and Google Client Secret.
+   - Add the Supabase callback URL (`https://<project-ref>.supabase.co/auth/v1/callback`) to your **Authorized redirect URIs** in the Google Cloud Console.
+2. In the **Supabase Dashboard** -> **Authentication** -> **URL Configuration**:
+   - Ensure `https://auth.zuup.dev/**` (and `http://localhost:*/**` for local development) is added to **Redirect URLs**.
+
+### 4. Identity Verification (KYC)
 
 To verify a user's real-world identity using DigiLocker:
 

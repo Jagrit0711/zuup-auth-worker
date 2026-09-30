@@ -39,9 +39,9 @@ app.use('*', secureHeaders({
     scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net", "https://challenges.cloudflare.com", "https://checkout.razorpay.com", "https://static.cloudflareinsights.com"],
     styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
     fontSrc: ["'self'", "https://fonts.gstatic.com"],
-    imgSrc: ["'self'", "data:", "https://raw.githubusercontent.com", "https://zuup.dev"],
-    connectSrc: ["'self'", "https://auth.zuup.dev", "https://*.supabase.co", "https://challenges.cloudflare.com", "https://digilocker.meripehchaan.gov.in"],
-    frameSrc: ["'self'", "https://challenges.cloudflare.com", "https://api.razorpay.com", "https://digilocker.meripehchaan.gov.in"],
+    imgSrc: ["'self'", "data:", "https://raw.githubusercontent.com", "https://zuup.dev", "https://lh3.googleusercontent.com", "https://*.googleusercontent.com"],
+    connectSrc: ["'self'", "https://auth.zuup.dev", "https://*.supabase.co", "https://challenges.cloudflare.com", "https://digilocker.meripehchaan.gov.in", "https://accounts.google.com"],
+    frameSrc: ["'self'", "https://challenges.cloudflare.com", "https://api.razorpay.com", "https://digilocker.meripehchaan.gov.in", "https://accounts.google.com"],
   }
 }));
 app.use('/*', cors({
@@ -131,6 +131,25 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
         <div class="flex bg-input border border-border rounded-xl p-1 mb-6" x-show="step === 'login' || step === 'signup' || step === 'otp_send'">
             <button @click="setMainMode('login')" type="button" :class="step !== 'signup' ? 'bg-[#1C1D26] text-white shadow-sm' : 'text-muted hover:text-white'" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors">Sign In</button>
             <button @click="setMainMode('signup')" type="button" :class="step === 'signup' ? 'bg-[#1C1D26] text-white shadow-sm' : 'text-muted hover:text-white'" class="flex-1 py-2 text-sm font-medium rounded-lg transition-colors">Sign Up</button>
+        </div>
+
+        <!-- Google Social Auth Button -->
+        <div x-show="step === 'login' || step === 'signup' || step === 'otp_send'" class="mb-5">
+            <button type="button" @click="signInWithGoogle" :disabled="loading" class="w-full px-4 py-3 bg-input hover:bg-[#2A2D3A] border border-border hover:border-[#3E4152] disabled:opacity-50 text-white rounded-xl text-[15px] font-semibold transition-all flex items-center justify-center gap-3 shadow-sm group">
+                <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.67v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.16z"/>
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"/>
+                    <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.14-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                </svg>
+                <span x-text="step === 'signup' ? 'Sign up with Google' : 'Continue with Google'"></span>
+            </button>
+
+            <div class="flex items-center my-5">
+                <div class="flex-grow border-t border-border"></div>
+                <span class="px-3 text-xs font-semibold text-muted uppercase tracking-wider">Or continue with</span>
+                <div class="flex-grow border-t border-border"></div>
+            </div>
         </div>
 
         <!-- Tabs (for Sign In only) -->
@@ -243,7 +262,7 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                 otpArray: ['', '', '', '', '', ''],
                 showPassword: false,
                 loading: false,
-                errorMessage: '',
+                errorMessage: new URLSearchParams(window.location.search).get('auth_error') || '',
                 successMessage: '',
                 redirectTo: (() => {
                     const params = new URLSearchParams(window.location.search);
@@ -460,6 +479,22 @@ const renderLoginUI = (error?: string, siteName: string = 'Zuup', defaultStep: s
                     } finally {
                         this.loading = false;
                     }
+                },
+
+                signInWithGoogle() {
+                    this.loading = true;
+                    this.errorMessage = '';
+                    
+                    const callbackUrl = new URL('/auth/callback', window.location.origin);
+                    if (this.redirectTo) callbackUrl.searchParams.set('redirect_to', this.redirectTo);
+                    if (this.clientId) callbackUrl.searchParams.set('client_id', this.clientId);
+                    if (this.redirectUri) callbackUrl.searchParams.set('redirect_uri', this.redirectUri);
+
+                    const authUrl = new URL('/auth/v1/authorize', window.location.origin);
+                    authUrl.searchParams.set('provider', 'google');
+                    authUrl.searchParams.set('redirect_to', callbackUrl.toString());
+
+                    window.location.href = authUrl.toString();
                 }
             }));
         });
@@ -706,6 +741,184 @@ app.get('/signup', async (c) => {
   
   c.header('Cache-Control', 'private, no-cache, no-store, must-revalidate');
   return c.html(renderLoginUI(error, siteName, 'signup', getSiteKey(c)));
+});
+
+app.get('/auth/google', async (c) => {
+  const redirect_to = c.req.query('redirect_to') || '';
+  const client_id = c.req.query('client_id') || '';
+  const redirect_uri = c.req.query('redirect_uri') || '';
+
+  const callbackUrl = new URL('/auth/callback', c.req.url);
+  if (redirect_to) callbackUrl.searchParams.set('redirect_to', redirect_to);
+  if (client_id) callbackUrl.searchParams.set('client_id', client_id);
+  if (redirect_uri) callbackUrl.searchParams.set('redirect_uri', redirect_uri);
+
+  const authUrl = new URL('/auth/v1/authorize', c.req.url);
+  authUrl.searchParams.set('provider', 'google');
+  authUrl.searchParams.set('redirect_to', callbackUrl.toString());
+
+  return c.redirect(authUrl.toString());
+});
+
+app.get('/auth/callback', async (c) => {
+  const code = c.req.query('code');
+  const error = c.req.query('error');
+  const errorDesc = c.req.query('error_description');
+  const client_id = c.req.query('client_id') || '';
+  const redirect_uri = c.req.query('redirect_uri') || '';
+  const redirect_to = c.req.query('redirect_to') || '';
+
+  if (error) {
+    const errorTarget = redirect_to || redirect_uri || '/login';
+    try {
+      const errorUrl = new URL(errorTarget, c.req.url);
+      errorUrl.searchParams.set('auth_error', errorDesc || error);
+      return c.redirect(errorUrl.toString());
+    } catch {
+      return c.redirect('/login?auth_error=' + encodeURIComponent(errorDesc || error));
+    }
+  }
+
+  // If Supabase returned a PKCE authorization code in query params:
+  if (code) {
+    try {
+      const supabase = initSupabaseAnon(c);
+      const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+      if (exchangeError || !data?.session) {
+        throw new Error(exchangeError?.message || 'Failed to exchange auth code');
+      }
+
+      await setSSOCookie(c, data.session.access_token);
+      const ssoRes = await handleSSORedirect(c, client_id, redirect_uri, data, redirect_to);
+      if (ssoRes.redirect_to) {
+        return c.redirect(ssoRes.redirect_to);
+      }
+      return c.redirect(redirect_to || redirect_uri || 'https://zuup.dev/dashboard');
+    } catch (err: any) {
+      const errorTarget = redirect_to || redirect_uri || '/login';
+      try {
+        const errorUrl = new URL(errorTarget, c.req.url);
+        errorUrl.searchParams.set('auth_error', err.message || 'Authentication failed');
+        return c.redirect(errorUrl.toString());
+      } catch {
+        return c.redirect('/login?auth_error=' + encodeURIComponent(err.message || 'Authentication failed'));
+      }
+    }
+  }
+
+  // If code is not present, Supabase returned implicit flow tokens in hash fragment (#access_token=...)
+  return c.html(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zuup Auth | Completing Sign In...</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #16171D; color: white; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+    <div class="flex flex-col items-center gap-4 text-center">
+        <div class="animate-spin w-10 h-10 border-4 border-white/20 border-t-[#F04F67] rounded-full"></div>
+        <h2 class="text-xl font-semibold text-white">Completing sign in...</h2>
+        <p class="text-sm text-gray-400">Please wait while we verify your Google credentials.</p>
+        <div id="error-box" class="hidden mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm max-w-md"></div>
+    </div>
+
+    <script>
+        async function completeOAuth() {
+            const searchParams = new URLSearchParams(window.location.search);
+            try {
+                const hash = window.location.hash.startsWith('#') ? window.location.hash.substring(1) : window.location.hash;
+                const hashParams = new URLSearchParams(hash);
+
+                const accessToken = hashParams.get('access_token');
+                const refreshToken = hashParams.get('refresh_token');
+                const error = searchParams.get('error') || hashParams.get('error');
+                const errorDesc = searchParams.get('error_description') || hashParams.get('error_description');
+
+                if (error) {
+                    throw new Error(errorDesc || error);
+                }
+
+                if (!accessToken) {
+                    throw new Error('No authentication token received from Google provider.');
+                }
+
+                const res = await fetch('/api/auth/token-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        access_token: accessToken,
+                        refresh_token: refreshToken,
+                        client_id: searchParams.get('client_id'),
+                        redirect_uri: searchParams.get('redirect_uri'),
+                        redirect_to: searchParams.get('redirect_to')
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Failed to establish session');
+
+                if (data.redirect_to) {
+                    window.location.href = data.redirect_to;
+                } else {
+                    const fallback = searchParams.get('redirect_to') || searchParams.get('redirect_uri') || 'https://zuup.dev/dashboard';
+                    const url = new URL(fallback);
+                    url.searchParams.set('token', accessToken);
+                    window.location.href = url.toString();
+                }
+            } catch (err) {
+                const errBox = document.getElementById('error-box');
+                if (errBox) {
+                    errBox.textContent = err.message || 'Authentication error';
+                    errBox.classList.remove('hidden');
+                }
+                setTimeout(() => {
+                    const fallback = searchParams.get('redirect_to') || searchParams.get('redirect_uri') || '/login';
+                    try {
+                        const url = new URL(fallback, window.location.origin);
+                        url.searchParams.set('auth_error', err.message || 'Authentication failed');
+                        window.location.href = url.toString();
+                    } catch {
+                        window.location.href = '/login?auth_error=' + encodeURIComponent(err.message || 'Authentication failed');
+                    }
+                }, 2000);
+            }
+        }
+        completeOAuth();
+    </script>
+</body>
+</html>`);
+});
+
+app.post('/api/auth/token-login', async (c) => {
+  const { access_token, refresh_token, client_id, redirect_uri, redirect_to } = await c.req.json();
+  if (!access_token) return c.json({ error: 'Missing access_token' }, 400);
+
+  try {
+    const supabase = initSupabaseAnon(c);
+    const { data: userData, error: userError } = await supabase.auth.getUser(access_token);
+    if (userError || !userData?.user) {
+      return c.json({ error: userError?.message || 'Invalid access token' }, 401);
+    }
+
+    await setSSOCookie(c, access_token);
+    const sessionData = { 
+      session: { 
+        access_token, 
+        refresh_token: refresh_token || null 
+      }, 
+      user: userData.user 
+    };
+    const responseData = await handleSSORedirect(c, client_id, redirect_uri, sessionData, redirect_to);
+
+    return c.json({ success: true, ...responseData });
+  } catch (err: any) {
+    return c.json({ error: err.message || 'Failed to authenticate token' }, 500);
+  }
 });
 
 app.get('/forgot-password', (c) => {
