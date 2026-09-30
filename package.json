@@ -1,5 +1,6 @@
 {
   "name": "zuup-auth-worker",
+  "version": "1.9.5",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",

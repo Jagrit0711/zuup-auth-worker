@@ -36,10 +36,14 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// Intercept dash.auth.zuup.dev and dash.zuup.dev requests to serve console immediately
+// Intercept dash.auth.zuup.dev and dash.zuup.dev requests - ADMIN ONLY
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
   if ((url.hostname === 'dash.auth.zuup.dev' || url.hostname === 'dash.zuup.dev') && (url.pathname === '/' || url.pathname === '')) {
+    const isAuthed = await verifyAdminAccess(c);
+    if (!isAuthed) {
+      return c.redirect(`https://auth.zuup.dev/login?redirect_to=${encodeURIComponent(c.req.url)}`);
+    }
     return c.html(renderSuperAdminDashboard());
   }
   await next();
@@ -3108,13 +3112,6 @@ function _legacyAdminUI() {
 // ==========================================
 
 async function verifyAdminAccess(c: any): Promise<boolean> {
-  const host = c.req.header('host') || '';
-  const url = new URL(c.req.url);
-  // 0. Auto-allow local development on localhost or 127.0.0.1
-  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || host.includes('localhost') || host.includes('127.0.0.1')) {
-    return true;
-  }
-
   // 1. Direct Secret header check (x-admin-secret or apikey)
   const adminSecretHeader = c.req.header('x-admin-secret') || c.req.header('x-zuup-admin-secret');
   const apiKeyHeader = c.req.header('apikey');
@@ -3162,72 +3159,42 @@ async function verifyAdminAccess(c: any): Promise<boolean> {
   }
 }
 
-// Serve Super Admin Console UI
+// Serve Super Admin Console UI - ADMIN ONLY (Redirects to standard /login if not authenticated)
 app.get('/admin', async (c) => {
+  const isAuthed = await verifyAdminAccess(c);
+  if (!isAuthed) {
+    const loginUrl = c.req.url.includes('localhost')
+      ? `/login?redirect_to=${encodeURIComponent(c.req.url)}`
+      : `https://auth.zuup.dev/login?redirect_to=${encodeURIComponent(c.req.url)}`;
+    return c.redirect(loginUrl);
+  }
   return c.html(renderSuperAdminDashboard());
 });
 
 app.get('/dash', async (c) => {
+  const isAuthed = await verifyAdminAccess(c);
+  if (!isAuthed) {
+    const loginUrl = c.req.url.includes('localhost')
+      ? `/login?redirect_to=${encodeURIComponent(c.req.url)}`
+      : `https://auth.zuup.dev/login?redirect_to=${encodeURIComponent(c.req.url)}`;
+    return c.redirect(loginUrl);
+  }
   return c.html(renderSuperAdminDashboard());
-});
-
-// Admin Login endpoint (No Turnstile required for admin portal)
-app.post('/api/admin/login', async (c) => {
-  const { email, password, secret } = await c.req.json();
-
-  // 1. Direct Secret / Master Key Login
-  if (secret) {
-    if (
-      (c.env.ADMIN_SECRET && secret === c.env.ADMIN_SECRET) ||
-      (c.env.GATEWAY_SECRET && secret === c.env.GATEWAY_SECRET) ||
-      (c.env.SUPABASE_SERVICE_ROLE_KEY && secret === c.env.SUPABASE_SERVICE_ROLE_KEY)
-    ) {
-      return c.json({ success: true, token: secret, email: 'admin@zuup.dev', role: 'admin' });
-    }
-    return c.json({ error: 'Invalid Admin Secret' }, 401);
-  }
-
-  // 2. Email + Password Admin Login
-  if (!email || !password) {
-    return c.json({ error: 'Email and password (or admin secret) are required' }, 400);
-  }
-
-  if (!c.env.SUPABASE_URL || !c.env.SUPABASE_ANON_KEY) {
-    return c.json({ error: 'Database configuration missing' }, 500);
-  }
-
-  try {
-    const supabaseAnon = initSupabaseAnon(c);
-    const { data, error } = await supabaseAnon.auth.signInWithPassword({ email, password });
-    if (error || !data.user) {
-      return c.json({ error: error?.message || 'Authentication failed' }, 401);
-    }
-
-    const isOwnerEmail = data.user.email === (c.env.ADMIN_EMAIL || 'jagrit@zuup.dev');
-    const isAdminRole = data.user.app_metadata?.role === 'admin' || data.user.user_metadata?.role === 'admin';
-    if (!isOwnerEmail && !isAdminRole) {
-      return c.json({ error: 'Forbidden: Admin access required for this account' }, 403);
-    }
-
-    if (data.session) {
-      await setSSOCookie(c, data.session.access_token);
-    }
-
-    return c.json({
-      success: true,
-      token: data.session?.access_token,
-      user: data.user,
-      email: data.user.email
-    });
-  } catch (err: any) {
-    return c.json({ error: err.message || 'Login failed' }, 500);
-  }
 });
 
 // Admin Auth Status check
 app.get('/api/admin/auth-status', async (c) => {
   const isAuthed = await verifyAdminAccess(c);
-  return c.json({ authenticated: isAuthed });
+  let email = '';
+  const token = getCookie(c, '__Secure-zuup_session') || c.req.header('Authorization')?.replace(/^Bearer\s+/i, '');
+  if (token && c.env.SUPABASE_URL && c.env.SUPABASE_SERVICE_ROLE_KEY) {
+    try {
+      const supabaseAdmin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY);
+      const { data } = await supabaseAdmin.auth.getUser(token);
+      if (data?.user?.email) email = data.user.email;
+    } catch {}
+  }
+  return c.json({ authenticated: isAuthed, email: email || 'jagrit@zuup.dev' });
 });
 
 // 1. Live System & Database Metrics

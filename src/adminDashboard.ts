@@ -4,7 +4,7 @@ export function renderSuperAdminDashboard(): string {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zuup Console | dash.auth.zuup.dev</title>
+    <title>Zuup Console v1.9.5 | dash.auth.zuup.dev</title>
     <script>
         // Suppress harmless tailwind play CDN dev warning in browser console
         const _origWarn = console.warn;
@@ -54,64 +54,8 @@ export function renderSuperAdminDashboard(): string {
 </head>
 <body class="min-h-screen flex bg-bg text-white overflow-hidden" x-data="superAdminApp">
 
-    <!-- AUTHENTICATION CHECK / LOGIN OVERLAY -->
-    <div x-show="!authenticated" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-bg/95 backdrop-blur-md p-4">
-        <div class="w-full max-w-md glass-card rounded-2xl p-8 border border-border shadow-2xl">
-            <div class="flex items-center gap-3 mb-6">
-                <img src="https://zuup.dev/lovable-uploads/b44b8051-6117-4b37-999d-014c4c33dd13.png" alt="Zuup" class="h-9 w-auto">
-                <div>
-                    <h1 class="text-xl font-bold text-white tracking-tight">Zuup <span class="text-primary font-normal">Console</span></h1>
-                    <p class="text-xs text-muted">dash.auth.zuup.dev</p>
-                </div>
-            </div>
-            
-            <div class="flex border-b border-border mb-5 text-xs">
-                <button type="button" @click="loginMode = 'password'" :class="loginMode === 'password' ? 'border-b-2 border-primary text-white font-semibold' : 'text-muted'" class="pb-2 px-3 transition-colors">
-                    Admin Password
-                </button>
-                <button type="button" @click="loginMode = 'secret'" :class="loginMode === 'secret' ? 'border-b-2 border-primary text-white font-semibold' : 'text-muted'" class="pb-2 px-3 transition-colors">
-                    Admin / Gateway Secret
-                </button>
-            </div>
-
-            <div x-show="authError" x-text="authError" class="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs"></div>
-
-            <form @submit.prevent="handleLogin" class="space-y-4">
-                <template x-if="loginMode === 'password'">
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-xs font-medium text-muted mb-1">Admin Email</label>
-                            <input type="email" x-model="loginEmail" placeholder="jagrit@zuup.dev" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-muted mb-1">Password</label>
-                            <input type="password" x-model="loginPassword" placeholder="••••••••" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
-                        </div>
-                    </div>
-                </template>
-
-                <template x-if="loginMode === 'secret'">
-                    <div>
-                        <label class="block text-xs font-medium text-muted mb-1">Admin Secret or Gateway Key</label>
-                        <input type="password" x-model="loginSecret" placeholder="Paste your ADMIN_SECRET or GATEWAY_SECRET" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
-                        <p class="text-[11px] text-muted mt-1">Supports ADMIN_SECRET, GATEWAY_SECRET, or Service Role Key.</p>
-                    </div>
-                </template>
-
-                <button type="submit" :disabled="loginLoading" class="w-full py-3 bg-primary hover:bg-primaryHover text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 disabled:opacity-50">
-                    <span x-show="loginLoading" class="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full"></span>
-                    <span x-text="loginLoading ? 'Authenticating...' : (loginMode === 'secret' ? 'Sign In with Secret' : 'Sign In to Console')"></span>
-                </button>
-
-                <button type="button" @click="authenticated = true; adminEmail = 'jagrit@zuup.dev (Bypassed)'; refreshCurrentTab();" class="w-full py-2 bg-input hover:bg-border text-muted hover:text-white rounded-xl text-xs font-medium transition-colors border border-border flex items-center justify-center gap-1.5">
-                    ⚡ Quick Access (Bypass Overlay)
-                </button>
-            </form>
-        </div>
-    </div>
-
     <!-- MAIN ADMIN INTERFACE -->
-    <div x-show="authenticated" class="flex w-full h-screen overflow-hidden">
+    <div class="flex w-full h-screen overflow-hidden">
         
         <!-- SIDEBAR -->
         <aside class="w-64 bg-card border-r border-border flex flex-col h-screen flex-shrink-0 select-none">
@@ -120,7 +64,7 @@ export function renderSuperAdminDashboard(): string {
                 <img src="https://zuup.dev/lovable-uploads/b44b8051-6117-4b37-999d-014c4c33dd13.png" alt="Zuup" class="h-8 w-auto">
                 <div class="flex flex-col">
                     <span class="font-bold text-lg leading-tight text-white">Zuup <span class="text-primary font-normal">Console</span></span>
-                    <span class="text-[11px] text-muted font-mono">dash.auth.zuup.dev</span>
+                    <span class="text-[11px] text-muted font-mono">v1.9.5 · dash.auth.zuup.dev</span>
                 </div>
             </div>
 
@@ -789,15 +733,7 @@ export function renderSuperAdminDashboard(): string {
     <script>
         function superAdminApp() {
             return {
-                authenticated: false,
                 adminEmail: '',
-                loginEmail: '',
-                loginPassword: '',
-                loginSecret: '',
-                loginMode: 'password',
-                loginLoading: false,
-                authError: '',
-
                 tab: 'overview',
                 loading: false,
                 tabTitles: {
@@ -862,83 +798,33 @@ export function renderSuperAdminDashboard(): string {
                 kycVerifications: [],
 
                 async init() {
-                    // Check URL query parameters for ?secret= or ?admin_secret=
-                    const params = new URLSearchParams(window.location.search);
-                    const urlSecret = params.get('secret') || params.get('admin_secret');
-                    if (urlSecret) {
-                        localStorage.setItem('admin_token', urlSecret);
-                    }
-
-                    // Auto-bypass on localhost / local development so admin is never locked out
-                    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-                    if (isLocal) {
-                        this.authenticated = true;
-                        this.adminEmail = 'jagrit@zuup.dev (Local Dev)';
-                        this.refreshCurrentTab();
-                        return;
-                    }
-
-                    const token = localStorage.getItem('admin_token');
-                    if (token) {
-                        this.authenticated = true;
-                        this.refreshCurrentTab();
-                    } else {
-                        // Check if backend session is valid
-                        try {
-                            const res = await fetch('/api/admin/auth-status');
-                            const data = await res.json();
-                            if (data.authenticated) {
-                                this.authenticated = true;
-                                this.refreshCurrentTab();
-                            }
-                        } catch (e) {}
-                    }
-                },
-
-                async handleLogin() {
-                    this.loginLoading = true;
-                    this.authError = '';
+                    this.loading = true;
                     try {
-                        const payload = this.loginMode === 'secret'
-                            ? { secret: this.loginSecret }
-                            : { email: this.loginEmail, password: this.loginPassword };
-
-                        const res = await fetch('/api/admin/login', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
+                        const res = await fetch('/api/admin/auth-status');
                         const data = await res.json();
-                        if (!res.ok) throw new Error(data.error || 'Authentication failed');
-
-                        const token = data.token || data.session?.access_token || this.loginSecret;
-                        if (token) {
-                            localStorage.setItem('admin_token', token);
-                            this.adminEmail = data.email || this.loginEmail || 'Admin';
-                            this.authenticated = true;
+                        if (data && data.authenticated) {
+                            this.adminEmail = data.email || 'jagrit@zuup.dev';
                             this.refreshCurrentTab();
                         } else {
-                            throw new Error('No authentication token returned');
+                            // Non-admin or unauthenticated: redirect directly to standard auth.zuup.dev/login
+                            window.location.href = '/login?redirect_to=' + encodeURIComponent(window.location.href);
                         }
-                    } catch (err) {
-                        this.authError = err.message;
-                    } finally {
-                        this.loginLoading = false;
+                    } catch (e) {
+                        window.location.href = '/login?redirect_to=' + encodeURIComponent(window.location.href);
                     }
                 },
 
                 handleLogout() {
-                    localStorage.removeItem('admin_token');
-                    this.authenticated = false;
-                    fetch('/api/logout').catch(() => {});
+                    fetch('/api/logout').finally(() => {
+                        window.location.href = '/login?redirect_to=' + encodeURIComponent(window.location.href);
+                    });
                 },
 
                 getHeaders() {
-                    const token = localStorage.getItem('admin_token');
                     const headers = { 'Content-Type': 'application/json' };
-                    if (token) {
-                        headers['Authorization'] = 'Bearer ' + token;
-                        headers['x-admin-secret'] = token;
+                    const secret = new URLSearchParams(window.location.search).get('secret') || new URLSearchParams(window.location.search).get('admin_secret');
+                    if (secret) {
+                        headers['x-admin-secret'] = secret;
                     }
                     return headers;
                 },
