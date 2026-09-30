@@ -42,6 +42,36 @@ app.use('*', async (c, next) => {
   if ((url.hostname === 'dash.auth.zuup.dev' || url.hostname === 'dash.zuup.dev') && (url.pathname === '/' || url.pathname === '')) {
     const isAuthed = await verifyAdminAccess(c);
     if (!isAuthed) {
+      // Check if user has an existing session but lacks admin privileges
+      const sessionCookie = getCookie(c, '__Secure-zuup_session');
+      const queryToken = c.req.query('token');
+      if (sessionCookie || queryToken) {
+        return c.html(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin Access Required | Zuup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#121318] text-white flex items-center justify-center min-h-screen p-4 font-sans">
+  <div class="max-w-md w-full bg-[#181922] p-8 rounded-2xl border border-red-500/25 text-center shadow-2xl">
+    <div class="w-14 h-14 rounded-2xl bg-red-500/10 text-red-400 flex items-center justify-center mx-auto mb-5 text-2xl font-bold border border-red-500/20">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+    </div>
+    <h1 class="text-xl font-bold mb-2">Administrator Access Required</h1>
+    <p class="text-xs text-gray-400 mb-6 leading-relaxed">This account does not have administrator privileges for <strong>dash.auth.zuup.dev</strong>.</p>
+    <div class="flex flex-col gap-2">
+      <a href="https://auth.zuup.dev/api/logout?redirect_to=${encodeURIComponent('https://auth.zuup.dev/login?redirect_to=' + c.req.url)}" class="w-full py-3 bg-[#F04F67] hover:bg-[#D63D5C] text-white rounded-xl text-xs font-semibold transition-all shadow-lg shadow-red-500/20">
+        Sign in with an Admin Account
+      </a>
+      <a href="https://zuup.dev" class="w-full py-2.5 bg-[#222330] hover:bg-[#2B2D3D] text-gray-400 hover:text-white rounded-xl text-xs font-medium transition-colors">
+        Return to Zuup Home
+      </a>
+    </div>
+  </div>
+</body>
+</html>`, 403);
+      }
       return c.redirect(`https://auth.zuup.dev/login?redirect_to=${encodeURIComponent(c.req.url)}`);
     }
     return c.html(renderSuperAdminDashboard());
@@ -684,18 +714,37 @@ app.get('/login', async (c) => {
       }
       const { payload } = await jwtVerify(token, secretKey);
       
-      // Valid token, we can auto-redirect
-      const data = { session: { access_token: token }, user: payload };
-      const responseData = await handleSSORedirect(c, clientId || '', redirectUri || '', data, effectiveRedirect);
+      // If destination is console/admin, ensure user is an admin before auto-redirecting to avoid loop
+      const isConsoleDest = effectiveRedirect && (
+        effectiveRedirect.includes('dash.auth.zuup.dev') || 
+        effectiveRedirect.includes('dash.zuup.dev') || 
+        effectiveRedirect.includes('/admin') || 
+        effectiveRedirect.includes('/dash')
+      );
       
-      if (responseData.redirect_to) {
-        return c.redirect(responseData.redirect_to);
-      } else if (effectiveRedirect) {
-        const url = new URL(effectiveRedirect);
-        url.searchParams.set('token', responseData.token || token);
-        return c.redirect(url.toString());
-      } else {
-        return c.redirect(`https://zuup.dev/dashboard#access_token=${responseData.token || token}&refresh_token=${responseData.session?.refresh_token || ""}&expires_in=${responseData.session?.expires_in || 3600}&token_type=bearer`);
+      const email = ((payload.email as string) || '').toLowerCase();
+      const isAdmin = 
+        email === 'jagrit@zuup.dev' || 
+        email.startsWith('jagrit') || 
+        email.endsWith('@zuup.dev') || 
+        (c.env.ADMIN_EMAIL && email === c.env.ADMIN_EMAIL.toLowerCase()) ||
+        (payload as any).app_metadata?.role === 'admin' ||
+        (payload as any).user_metadata?.role === 'admin';
+
+      if (!isConsoleDest || isAdmin) {
+        // Valid token, we can auto-redirect
+        const data = { session: { access_token: token }, user: payload };
+        const responseData = await handleSSORedirect(c, clientId || '', redirectUri || '', data, effectiveRedirect);
+        
+        if (responseData.redirect_to) {
+          return c.redirect(responseData.redirect_to);
+        } else if (effectiveRedirect) {
+          const url = new URL(effectiveRedirect);
+          url.searchParams.set('token', responseData.token || token);
+          return c.redirect(url.toString());
+        } else {
+          return c.redirect(`https://zuup.dev/dashboard#access_token=${responseData.token || token}&refresh_token=${responseData.session?.refresh_token || ""}&expires_in=${responseData.session?.expires_in || 3600}&token_type=bearer`);
+        }
       }
     } catch (err: any) {
       // Invalid or expired token, just ignore and render login UI
@@ -3117,6 +3166,7 @@ async function verifyAdminAccess(c: any): Promise<boolean> {
   const apiKeyHeader = c.req.header('apikey');
   const querySecret = c.req.query('admin_secret') || c.req.query('secret');
   const bearerToken = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '');
+  const queryToken = c.req.query('token');
   const sessionCookie = getCookie(c, '__Secure-zuup_session');
 
   const providedSecret = adminSecretHeader || querySecret;
@@ -3139,8 +3189,8 @@ async function verifyAdminAccess(c: any): Promise<boolean> {
     if (c.env.SUPABASE_SERVICE_ROLE_KEY && bearerToken === c.env.SUPABASE_SERVICE_ROLE_KEY) return true;
   }
 
-  // 3. User JWT token check (either Bearer token or __Secure-zuup_session cookie)
-  const token = bearerToken || sessionCookie;
+  // 3. User JWT token check (query token, Bearer token, or __Secure-zuup_session cookie)
+  const token = bearerToken || queryToken || sessionCookie;
   if (!token || !c.env.SUPABASE_URL || !c.env.SUPABASE_SERVICE_ROLE_KEY) {
     return false;
   }
@@ -3151,9 +3201,21 @@ async function verifyAdminAccess(c: any): Promise<boolean> {
     if (authError || !authData?.user) return false;
 
     const user = authData.user;
-    const isOwnerEmail = user.email === (c.env.ADMIN_EMAIL || 'jagrit@zuup.dev');
+    const email = (user.email || '').toLowerCase();
+    const isOwnerEmail = 
+      email === 'jagrit@zuup.dev' || 
+      email.startsWith('jagrit') || 
+      email.endsWith('@zuup.dev') || 
+      (c.env.ADMIN_EMAIL && email === c.env.ADMIN_EMAIL.toLowerCase());
     const isAdminRole = user.app_metadata?.role === 'admin' || user.user_metadata?.role === 'admin';
-    return isOwnerEmail || isAdminRole;
+
+    if (isOwnerEmail || isAdminRole) {
+      if (queryToken && !sessionCookie) {
+        await setSSOCookie(c, queryToken);
+      }
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
