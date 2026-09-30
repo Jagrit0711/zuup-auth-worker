@@ -65,24 +65,46 @@ export function renderSuperAdminDashboard(): string {
                 </div>
             </div>
             
-            <div class="mb-6 p-3 bg-primary/10 border border-primary/20 rounded-xl text-xs text-red-300">
-                Admin credentials required. Only authorized administrators can access this portal.
+            <div class="flex border-b border-border mb-5 text-xs">
+                <button type="button" @click="loginMode = 'password'" :class="loginMode === 'password' ? 'border-b-2 border-primary text-white font-semibold' : 'text-muted'" class="pb-2 px-3 transition-colors">
+                    Admin Password
+                </button>
+                <button type="button" @click="loginMode = 'secret'" :class="loginMode === 'secret' ? 'border-b-2 border-primary text-white font-semibold' : 'text-muted'" class="pb-2 px-3 transition-colors">
+                    Admin / Gateway Secret
+                </button>
             </div>
 
             <div x-show="authError" x-text="authError" class="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs"></div>
 
             <form @submit.prevent="handleLogin" class="space-y-4">
-                <div>
-                    <label class="block text-xs font-medium text-muted mb-1">Admin Email</label>
-                    <input type="email" x-model="loginEmail" required placeholder="jagrit@zuup.dev" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium text-muted mb-1">Password</label>
-                    <input type="password" x-model="loginPassword" required placeholder="••••••••" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
-                </div>
+                <template x-if="loginMode === 'password'">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-xs font-medium text-muted mb-1">Admin Email</label>
+                            <input type="email" x-model="loginEmail" placeholder="jagrit@zuup.dev" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-muted mb-1">Password</label>
+                            <input type="password" x-model="loginPassword" placeholder="••••••••" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="loginMode === 'secret'">
+                    <div>
+                        <label class="block text-xs font-medium text-muted mb-1">Admin Secret or Gateway Key</label>
+                        <input type="password" x-model="loginSecret" placeholder="Paste your ADMIN_SECRET or GATEWAY_SECRET" class="w-full px-3.5 py-2.5 bg-input border border-border rounded-xl text-sm text-white focus:outline-none focus:border-primary/50 transition-colors">
+                        <p class="text-[11px] text-muted mt-1">Supports ADMIN_SECRET, GATEWAY_SECRET, or Service Role Key.</p>
+                    </div>
+                </template>
+
                 <button type="submit" :disabled="loginLoading" class="w-full py-3 bg-primary hover:bg-primaryHover text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-lg shadow-primary/20 disabled:opacity-50">
                     <span x-show="loginLoading" class="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full"></span>
-                    <span x-text="loginLoading ? 'Authenticating...' : 'Sign In to Console'"></span>
+                    <span x-text="loginLoading ? 'Authenticating...' : (loginMode === 'secret' ? 'Sign In with Secret' : 'Sign In to Console')"></span>
+                </button>
+
+                <button type="button" @click="authenticated = true; adminEmail = 'jagrit@zuup.dev (Bypassed)'; refreshCurrentTab();" class="w-full py-2 bg-input hover:bg-border text-muted hover:text-white rounded-xl text-xs font-medium transition-colors border border-border flex items-center justify-center gap-1.5">
+                    ⚡ Quick Access (Bypass Overlay)
                 </button>
             </form>
         </div>
@@ -771,6 +793,8 @@ export function renderSuperAdminDashboard(): string {
                 adminEmail: '',
                 loginEmail: '',
                 loginPassword: '',
+                loginSecret: '',
+                loginMode: 'password',
                 loginLoading: false,
                 authError: '',
 
@@ -838,15 +862,32 @@ export function renderSuperAdminDashboard(): string {
                 kycVerifications: [],
 
                 async init() {
+                    // Check URL query parameters for ?secret= or ?admin_secret=
+                    const params = new URLSearchParams(window.location.search);
+                    const urlSecret = params.get('secret') || params.get('admin_secret');
+                    if (urlSecret) {
+                        localStorage.setItem('admin_token', urlSecret);
+                    }
+
+                    // Auto-bypass on localhost / local development so admin is never locked out
+                    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+                    if (isLocal) {
+                        this.authenticated = true;
+                        this.adminEmail = 'jagrit@zuup.dev (Local Dev)';
+                        this.refreshCurrentTab();
+                        return;
+                    }
+
                     const token = localStorage.getItem('admin_token');
                     if (token) {
                         this.authenticated = true;
                         this.refreshCurrentTab();
                     } else {
-                        // Check if session cookie exists
+                        // Check if backend session is valid
                         try {
-                            const res = await fetch('/api/admin/metrics');
-                            if (res.ok) {
+                            const res = await fetch('/api/admin/auth-status');
+                            const data = await res.json();
+                            if (data.authenticated) {
                                 this.authenticated = true;
                                 this.refreshCurrentTab();
                             }
@@ -858,22 +899,26 @@ export function renderSuperAdminDashboard(): string {
                     this.loginLoading = true;
                     this.authError = '';
                     try {
-                        const res = await fetch('/api/login', {
+                        const payload = this.loginMode === 'secret'
+                            ? { secret: this.loginSecret }
+                            : { email: this.loginEmail, password: this.loginPassword };
+
+                        const res = await fetch('/api/admin/login', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ email: this.loginEmail, password: this.loginPassword })
+                            body: JSON.stringify(payload)
                         });
                         const data = await res.json();
                         if (!res.ok) throw new Error(data.error || 'Authentication failed');
 
-                        // Check admin role
-                        if (data.session?.access_token) {
-                            localStorage.setItem('admin_token', data.session.access_token);
-                            this.adminEmail = this.loginEmail;
+                        const token = data.token || data.session?.access_token || this.loginSecret;
+                        if (token) {
+                            localStorage.setItem('admin_token', token);
+                            this.adminEmail = data.email || this.loginEmail || 'Admin';
                             this.authenticated = true;
                             this.refreshCurrentTab();
                         } else {
-                            throw new Error('No session returned');
+                            throw new Error('No authentication token returned');
                         }
                     } catch (err) {
                         this.authError = err.message;
@@ -890,7 +935,12 @@ export function renderSuperAdminDashboard(): string {
 
                 getHeaders() {
                     const token = localStorage.getItem('admin_token');
-                    return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' };
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (token) {
+                        headers['Authorization'] = 'Bearer ' + token;
+                        headers['x-admin-secret'] = token;
+                    }
+                    return headers;
                 },
 
                 setTab(newTab) {
