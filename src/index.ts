@@ -3226,10 +3226,8 @@ app.post('/api/admin/login', async (c) => {
 
 // Admin Auth Status check
 app.get('/api/admin/auth-status', async (c) => {
-  return c.json({
-    headers: Object.fromEntries(c.req.raw.headers.entries()),
-    env_keys: Object.keys(c.env || {})
-  });
+  const isAuthed = await verifyAdminAccess(c);
+  return c.json({ authenticated: isAuthed });
 });
 
 // 1. Live System & Database Metrics
