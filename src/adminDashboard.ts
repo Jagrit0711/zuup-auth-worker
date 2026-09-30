@@ -5,6 +5,14 @@ export function renderSuperAdminDashboard(): string {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zuup Console | dash.auth.zuup.dev</title>
+    <script>
+        // Suppress harmless tailwind play CDN dev warning in browser console
+        const _origWarn = console.warn;
+        console.warn = function(...args) {
+            if (args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) return;
+            _origWarn.apply(console, args);
+        };
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
@@ -43,9 +51,8 @@ export function renderSuperAdminDashboard(): string {
         ::-webkit-scrollbar-thumb:hover { background: #8F91A3; }
         .glass-card { background: rgba(24, 25, 34, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(43, 45, 61, 0.8); }
     </style>
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
-<body class="min-h-screen flex bg-bg text-white overflow-hidden" x-data="superAdminApp()">
+<body class="min-h-screen flex bg-bg text-white overflow-hidden" x-data="superAdminApp">
 
     <!-- AUTHENTICATION CHECK / LOGIN OVERLAY -->
     <div x-show="!authenticated" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-bg/95 backdrop-blur-md p-4">
@@ -560,14 +567,14 @@ export function renderSuperAdminDashboard(): string {
                                     <tr class="hover:bg-input/30 transition-colors">
                                         <td class="px-6 py-3.5 font-mono text-muted" x-text="new Date(log.created_at).toLocaleString()"></td>
                                         <td class="px-6 py-3.5 font-mono text-white">
-                                            <span class="px-2 py-0.5 rounded bg-input border border-border" x-text="log.site || 'direct'"></span>
+                                            <span class="px-2 py-0.5 rounded bg-input border border-border text-primary font-semibold" x-text="log.client_name || log.site || 'direct'"></span>
                                         </td>
                                         <td class="px-6 py-3.5 font-semibold text-white" x-text="log.action"></td>
-                                        <td class="px-6 py-3.5 text-muted font-mono" x-text="log.email || (log.user_id ? log.user_id.substring(0,8) + '...' : 'Anonymous')"></td>
+                                        <td class="px-6 py-3.5 text-muted font-mono" x-text="log.user_email || log.email || (log.user_id ? log.user_id.substring(0,8) + '...' : 'Anonymous')"></td>
                                         <td class="px-6 py-3.5">
                                             <span :class="log.status === 'success' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'" class="px-2 py-0.5 rounded-md border text-[11px] font-mono uppercase" x-text="log.status"></span>
                                         </td>
-                                        <td class="px-6 py-3.5 font-mono text-muted" x-text="(log.ip || '127.0.0.1') + ' (' + (log.country || 'IN') + ')'"></td>
+                                        <td class="px-6 py-3.5 font-mono text-muted" x-text="(log.ip_address || log.ip || '127.0.0.1') + ' (' + (log.country || 'IN') + ')'"></td>
                                     </tr>
                                 </template>
                                 <tr x-show="filteredLogs.length === 0">
@@ -588,29 +595,31 @@ export function renderSuperAdminDashboard(): string {
                         <table class="w-full text-left text-xs whitespace-nowrap">
                             <thead class="bg-input/60 text-muted uppercase font-semibold border-b border-border">
                                 <tr>
+                                    <th class="px-6 py-3.5">App / Requester</th>
+                                    <th class="px-6 py-3.5">User Email / ID</th>
                                     <th class="px-6 py-3.5">Verified Legal Name</th>
                                     <th class="px-6 py-3.5">Masked Aadhaar</th>
                                     <th class="px-6 py-3.5">DOB & Gender</th>
-                                    <th class="px-6 py-3.5">User ID</th>
-                                    <th class="px-6 py-3.5">Provider</th>
+                                    <th class="px-6 py-3.5">Status</th>
                                     <th class="px-6 py-3.5">Verified At</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-border">
-                                <template x-for="kyc in kycVerifications" :key="kyc.user_id">
+                                <template x-for="kyc in kycVerifications" :key="kyc.user_id || kyc.id">
                                     <tr class="hover:bg-input/30 transition-colors">
-                                        <td class="px-6 py-3.5 font-bold text-white" x-text="kyc.verified_name || 'Verified Citizen'"></td>
-                                        <td class="px-6 py-3.5 font-mono text-primary font-bold" x-text="kyc.masked_aadhaar || 'Aadhaar Verified'"></td>
+                                        <td class="px-6 py-3.5 font-mono text-primary font-semibold" x-text="kyc.client_name || kyc.client || 'Zuup Ecosystem'"></td>
+                                        <td class="px-6 py-3.5 font-mono text-white" x-text="kyc.user_email || (kyc.user_id ? kyc.user_id.substring(0,8) + '...' : 'N/A')"></td>
+                                        <td class="px-6 py-3.5 font-bold text-white" x-text="kyc.aadhaar_name || kyc.verified_name || 'Verified Citizen'"></td>
+                                        <td class="px-6 py-3.5 font-mono text-emerald-400 font-bold" x-text="kyc.aadhaar_masked || kyc.masked_aadhaar || 'XXXX-XXXX-9821'"></td>
                                         <td class="px-6 py-3.5 text-muted" x-text="(kyc.dob || 'N/A') + ' · ' + (kyc.gender || 'N/A')"></td>
-                                        <td class="px-6 py-3.5 font-mono text-muted text-[11px]" x-text="kyc.user_id"></td>
                                         <td class="px-6 py-3.5">
-                                            <span class="px-2 py-0.5 rounded-md border bg-blue-500/10 text-blue-400 border-blue-500/20 text-[11px] font-mono uppercase" x-text="kyc.provider || 'meripehchaan'"></span>
+                                            <span class="px-2 py-0.5 rounded-md border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[11px] font-mono uppercase" x-text="kyc.status || 'verified'"></span>
                                         </td>
                                         <td class="px-6 py-3.5 text-muted" x-text="new Date(kyc.verified_at).toLocaleString()"></td>
                                     </tr>
                                 </template>
                                 <tr x-show="kycVerifications.length === 0">
-                                    <td colspan="6" class="text-center py-12 text-muted">No KYC verification records found.</td>
+                                    <td colspan="7" class="text-center py-12 text-muted">No KYC verification records found.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -715,7 +724,7 @@ export function renderSuperAdminDashboard(): string {
 
     <!-- MODAL: RESET PASSWORD -->
     <div x-show="showPasswordModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-bg/80 backdrop-blur-sm p-4">
-        <div class="w-full max-w-md glass-card rounded-2xl p-6 border border-border shadow-2xl" x-if="selectedUserForPass">
+        <div class="w-full max-w-md glass-card rounded-2xl p-6 border border-border shadow-2xl" x-show="selectedUserForPass">
             <h3 class="text-lg font-bold text-white mb-1">Reset Password</h3>
             <p class="text-xs text-muted mb-4" x-text="'User: ' + selectedUserForPass?.email"></p>
             <form @submit.prevent="updateUserPassword" class="space-y-4 text-xs">
@@ -756,8 +765,8 @@ export function renderSuperAdminDashboard(): string {
     </div>
 
     <script>
-        document.addEventListener('alpine:init', () => {
-            Alpine.data('superAdminApp', () => ({
+        function superAdminApp() {
+            return {
                 authenticated: false,
                 adminEmail: '',
                 loginEmail: '',
@@ -905,7 +914,7 @@ export function renderSuperAdminDashboard(): string {
                         const res = await fetch('/api/admin/metrics', { headers: this.getHeaders() });
                         if (res.ok) {
                             const data = await res.json();
-                            this.metrics = data.metrics || {};
+                            this.metrics = data.metrics || data || {};
                         }
                         const logsRes = await fetch('/api/admin/logs', { headers: this.getHeaders() });
                         if (logsRes.ok) {
@@ -1242,7 +1251,11 @@ export function renderSuperAdminDashboard(): string {
                 get filteredLogs() {
                     if (!this.logFilterSite) return this.logs;
                     const q = this.logFilterSite.toLowerCase();
-                    return this.logs.filter(l => (l.site && l.site.toLowerCase().includes(q)) || (l.action && l.action.toLowerCase().includes(q)));
+                    return this.logs.filter(l => 
+                        ((l.site || l.client_name || '').toLowerCase().includes(q)) || 
+                        ((l.action || '').toLowerCase().includes(q)) ||
+                        ((l.user_email || l.email || '').toLowerCase().includes(q))
+                    );
                 },
 
                 async fetchKyc() {
@@ -1250,7 +1263,7 @@ export function renderSuperAdminDashboard(): string {
                         const res = await fetch('/api/admin/kyc', { headers: this.getHeaders() });
                         if (res.ok) {
                             const data = await res.json();
-                            this.kycVerifications = data.verifications || [];
+                            this.kycVerifications = data.kyc_logs || data.verifications || [];
                         }
                     } catch(e) {}
                 },
@@ -1260,9 +1273,14 @@ export function renderSuperAdminDashboard(): string {
                     if (typeof val === 'object') return JSON.stringify(val);
                     return String(val);
                 }
-            }));
+            };
+        }
+        window.superAdminApp = superAdminApp;
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('superAdminApp', superAdminApp);
         });
     </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
 </body>
 </html>`;
 }

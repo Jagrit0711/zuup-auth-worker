@@ -3238,16 +3238,20 @@ app.get('/api/admin/metrics', async (c) => {
     } catch {}
   }
 
-  return c.json({
+  const metricsObj = {
     operational: true,
     edgeRegion: c.req.raw.cf?.colo || 'Global Edge',
     edgeMemory: '64 MB / 128 MB',
     databaseLatency: `${dbLatency}ms`,
     databaseStatus: dbHealthy ? 'Connected & Healthy' : 'Degraded',
     totalUsers,
-    kycVerifiedCount,
-    totalPayments,
+    totalPaymentsVolume: Math.round(totalVolume * 100) / 100,
     totalVolume: Math.round(totalVolume * 100) / 100,
+    totalPaymentsCount: totalPayments,
+    totalPayments,
+    totalKycCount: kycVerifiedCount,
+    kycVerifiedCount,
+    totalLinksCount: paymentLinksCount,
     paymentLinksCount,
     uptime: '100% (Cloudflare Edge)',
     postgresStats: {
@@ -3255,6 +3259,11 @@ app.get('/api/admin/metrics', async (c) => {
       ssl: 'Enabled (TLSv1.3)',
       version: 'PostgreSQL 15 (Supabase Cloud)'
     }
+  };
+
+  return c.json({
+    ...metricsObj,
+    metrics: metricsObj
   });
 });
 
