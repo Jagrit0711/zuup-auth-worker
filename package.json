@@ -7,7 +7,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",
-    "hono": "^4.4.6",
+    "hono": "^4.12.27",
     "jose": "^6.2.3"
   },
   "devDependencies": {
