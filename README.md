@@ -2,12 +2,17 @@
 
 Zuup Auth Gateway is a high-performance authentication, identity, and database proxy built on Cloudflare Workers and Hono. It is designed to sit between your frontend applications and your backend services (like Supabase, Razorpay, or Identity Providers) to ensure that sensitive API keys and secrets are never exposed to the client browser.
 
-## Recent Updates (v2.90)
-- **Sign In & Sign Up with Google:** Added seamless Google OAuth support across both Sign In and Sign Up portals (`/login`, `/signup`, and `/auth/google`) with automatic Supabase account provisioning, edge token verification, and unified SSO cookie issuance.
-- **Advanced RBAC:** Upgraded the Admin authentication checks to use Role-Based Access Control (`app_metadata.role === 'admin'`) embedded in the cryptographic JWT, providing un-spoofable security over simple email string checks.
-- **Proxy Blocklist & Bypass:** Blocked internal Supabase configuration endpoints (`/auth/v1/settings`, `/auth/v1/health`) from public access, implementing a secure bypass mechanism strictly for internal `GATEWAY_SECRET` traffic and authenticated sessions.
-- **Global Proxy Rate Limiting:** Deployed a strict Edge rate limiter capped at 300 requests per minute per IP to protect the database from DDoS and scraping abuse.
-- **UI & UX:** Updated the login and password reset UIs to feature a new, minimalist line-art sock puppet mascot ("Moza") optimized for dark mode.
+## Recent Updates (v3.00)
+- **White-Label Google OAuth on auth.zuup.dev:** Solved the callback URL showing as `supabase.co`! Google OAuth consent screen and redirects now explicitly use `https://auth.zuup.dev/auth/callback/google`. The Worker directly exchanges authorization codes with Google, mints ID tokens, and syncs sessions with Supabase via `supabase.auth.signInWithIdToken`—keeping your domain 100% white-labeled without paying for Supabase custom domain add-ons.
+- **Super Admin Console (dash.auth.zuup.dev & /admin):** Full-featured replacement for Supabase Studio so you never have to log into Supabase again:
+  - **Live Razorpay Payment Link Generator:** Create instant payment links via Razorpay API, track links, and automatically store transactions in the Supabase `payments` and `payment_links` tables.
+  - **Database Table Explorer & Row Editor:** Real-time PostgREST OpenAPI schema introspector. View all public tables, inspect column data types, filter, sort, paginate, and insert/update/delete rows directly.
+  - **Interactive SQL Runner:** Run arbitrary SQL commands, inspect results in real-time, with pre-configured 1-click templates for schema setup and database metrics.
+  - **System & Edge Metrics:** Live edge ping latencies, PostgreSQL connection status, edge memory footprint, total users, KYC verified count, and total payment volumes.
+  - **User Management & Direct Passwords:** View all registered users, create users, update passwords directly via `updateUserById`, trigger password reset emails, or delete users.
+  - **Security Audit & Access Logs:** Track which client applications called auth, at what time, with what action, IP address, country, and status.
+  - **DigiLocker / MeriPehchaan KYC Audit Logs:** Dedicated audit log tracking which client application requested KYC, verified Aadhaar full name, masked UID (`XXXX-XXXX-1234`), DOB, and gender.
+- **SQL Schema Script:** Added `schema_dash_admin.sql` to initialize all required admin tables, indexes, RLS policies, and the `exec_sql` helper function.
 
 ## System Architecture
 

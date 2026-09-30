@@ -20,6 +20,10 @@
     {
       "pattern": "auth.zuup.dev",
       "custom_domain": true
+    },
+    {
+      "pattern": "dash.auth.zuup.dev",
+      "custom_domain": true
     }
   ]
 }
