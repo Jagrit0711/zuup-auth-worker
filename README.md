@@ -44,6 +44,9 @@ flowchart TD
     Z <-->|"Creates Sessions &\nVerifies Signatures"| RP
 ```
 
+## Diagram
+[![Architecture diagram of jagrit0711/zuup-auth-worker](https://gitdiagram.com/jagrit0711/zuup-auth-worker/diagram.png)](https://gitdiagram.com/jagrit0711/zuup-auth-worker?utm_source=readme&utm_medium=picture)
+
 ## How It Works
 
 At its core, Zuup Auth acts as a secure middleware layer. 
